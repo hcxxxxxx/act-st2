@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import importlib
 import logging
 import random
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -81,6 +83,10 @@ class RuntimeConfig:
     vocab_file: Optional[str]
     load_vocoder_from_local: bool
     f5_repo_dir: Optional[Path]
+    auto_bootstrap_f5: bool
+    f5_vendor_dir: Optional[Path]
+    f5_git_url: str
+    f5_git_ref: str
 
 
 @dataclass
@@ -294,14 +300,70 @@ def select_generation_text(
     return preferred[start]
 
 
-def ensure_f5_tts_importable(f5_repo_dir: Optional[Path]) -> None:
-    if f5_repo_dir is None:
+def _is_f5_tts_importable() -> bool:
+    try:
+        importlib.import_module("f5_tts")
+        return True
+    except ModuleNotFoundError:
+        return False
+
+
+def ensure_f5_tts_importable(config: RuntimeConfig, logger: logging.Logger) -> None:
+    # 1) 用户显式指定了仓库目录：仅使用该目录
+    if config.f5_repo_dir is not None:
+        src_dir = config.f5_repo_dir / "src"
+        if not src_dir.exists():
+            raise FileNotFoundError(f"未找到 f5_tts 源码目录: {src_dir}")
+        if str(src_dir) not in sys.path:
+            sys.path.insert(0, str(src_dir))
+        if not _is_f5_tts_importable():
+            raise ModuleNotFoundError(f"已添加 {src_dir} 到 sys.path，但仍无法导入 f5_tts。")
+        logger.info(f"[运行时] 使用 --f5_repo_dir 指定的本地 f5_tts: {config.f5_repo_dir}")
         return
-    src_dir = f5_repo_dir / "src"
-    if not src_dir.exists():
-        raise FileNotFoundError(f"未找到 f5_tts 源码目录: {src_dir}")
+
+    # 2) 已安装在当前环境（site-packages）
+    if _is_f5_tts_importable():
+        logger.info("[运行时] 检测到当前环境已安装 f5_tts，直接使用。")
+        return
+
+    # 3) 环境未安装 -> 自动在当前项目目录内自举
+    if not config.auto_bootstrap_f5:
+        raise ModuleNotFoundError(
+            "当前环境未安装 f5_tts，且已关闭自动自举。"
+            "可用 --f5_repo_dir 指定源码目录，或启用自动自举。"
+        )
+
+    vendor_dir = config.f5_vendor_dir
+    if vendor_dir is None:
+        vendor_dir = Path(__file__).resolve().parent / "_vendor" / "F5-TTS"
+    vendor_dir = vendor_dir.resolve()
+    src_dir = vendor_dir / "src"
+
+    if not (src_dir / "f5_tts").exists():
+        vendor_dir.parent.mkdir(parents=True, exist_ok=True)
+        clone_cmd = ["git", "clone", "--depth", "1"]
+        if config.f5_git_ref:
+            clone_cmd.extend(["--branch", config.f5_git_ref])
+        clone_cmd.extend([config.f5_git_url, str(vendor_dir)])
+        logger.info(f"[运行时] 未找到 f5_tts，开始自举到本目录: {vendor_dir}")
+        try:
+            subprocess.run(clone_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or "").strip()
+            raise RuntimeError(
+                "自动拉取 F5-TTS 失败。"
+                f"\n命令: {' '.join(clone_cmd)}"
+                f"\n错误: {err or '无详细错误输出'}"
+            ) from e
+
     if str(src_dir) not in sys.path:
         sys.path.insert(0, str(src_dir))
+    if not _is_f5_tts_importable():
+        raise ModuleNotFoundError(
+            f"已自举到 {vendor_dir}，但仍无法导入 f5_tts。"
+            "请检查该目录完整性，或手动安装依赖后重试。"
+        )
+    logger.info(f"[运行时] 已使用本项目目录内的 f5_tts: {vendor_dir}")
 
 
 def resolve_device(requested: Optional[str]) -> str:
@@ -317,7 +379,7 @@ def resolve_device(requested: Optional[str]) -> str:
 
 
 def load_runtime(config: RuntimeConfig, logger: logging.Logger) -> RuntimeHandles:
-    ensure_f5_tts_importable(config.f5_repo_dir)
+    ensure_f5_tts_importable(config, logger)
 
     from cached_path import cached_path
     from hydra.utils import get_class
@@ -1446,6 +1508,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vocab_file", type=str, default=None)
     parser.add_argument("--load_vocoder_from_local", action="store_true")
     parser.add_argument("--f5_repo_dir", type=Path, default=None, help="可选：f5_tts 仓库根目录（脚本会自动加 /src 到 sys.path）")
+    parser.add_argument(
+        "--disable_auto_bootstrap_f5",
+        action="store_true",
+        help="关闭自动自举 f5_tts（默认开启）。关闭后若环境无 f5_tts 会直接报错。",
+    )
+    parser.add_argument(
+        "--f5_vendor_dir",
+        type=Path,
+        default=None,
+        help="自动自举时的目标目录。默认: <脚本目录>/_vendor/F5-TTS",
+    )
+    parser.add_argument(
+        "--f5_git_url",
+        type=str,
+        default="https://github.com/SWivid/F5-TTS.git",
+        help="自动自举使用的 F5-TTS 仓库地址",
+    )
+    parser.add_argument(
+        "--f5_git_ref",
+        type=str,
+        default="main",
+        help="自动自举使用的分支/标签/提交",
+    )
 
     parser.add_argument("--emotion2vec_model", type=str, default="iic/emotion2vec_plus_large")
     parser.add_argument("--emotion2vec_hub", type=str, default="ms")
@@ -1483,6 +1568,10 @@ def main() -> None:
         vocab_file=args.vocab_file,
         load_vocoder_from_local=bool(args.load_vocoder_from_local),
         f5_repo_dir=args.f5_repo_dir,
+        auto_bootstrap_f5=not bool(args.disable_auto_bootstrap_f5),
+        f5_vendor_dir=args.f5_vendor_dir,
+        f5_git_url=str(args.f5_git_url),
+        f5_git_ref=str(args.f5_git_ref),
     )
     runtime = load_runtime(runtime_cfg, logger=logger)
     patch_ditblock_forward_if_needed(runtime.model, logger=logger)
@@ -1554,4 +1643,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
