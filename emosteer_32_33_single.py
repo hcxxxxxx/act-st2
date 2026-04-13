@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import io
 import importlib
+import inspect
 import logging
 import random
 import shutil
@@ -731,6 +732,64 @@ def apply_step_aggregation_mode(step_steer: torch.Tensor, mode: str) -> torch.Te
     raise ValueError(f"不支持的 step 聚合模式: {mode}")
 
 
+_INFER_DROPPED_ARGS_WARNED: Set[str] = set()
+
+
+def call_infer_process_compat(
+    infer_process_fn: Any,
+    call_kwargs: Dict[str, Any],
+    seed: Optional[int],
+    logger: Optional[logging.Logger] = None,
+) -> Any:
+    """
+    兼容不同版本 f5_tts.infer.utils_infer.infer_process 的参数签名：
+    - 若函数支持 seed，则直接传入；
+    - 若不支持 seed，则调用前手动设随机种子；
+    - 仅传入目标函数签名里存在的参数，避免 unexpected keyword 报错。
+    """
+    sig = inspect.signature(infer_process_fn)
+    params = sig.parameters
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+    kwargs = dict(call_kwargs)
+    if seed is not None:
+        if has_var_kw or "seed" in params:
+            kwargs["seed"] = int(seed)
+        else:
+            set_global_seed(int(seed))
+
+    if not has_var_kw:
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in params}
+        dropped = sorted(k for k in kwargs.keys() if k not in params)
+        if dropped and logger is not None:
+            key = ",".join(dropped)
+            if key not in _INFER_DROPPED_ARGS_WARNED:
+                _INFER_DROPPED_ARGS_WARNED.add(key)
+                logger.warning(f"[兼容] 当前 infer_process 不支持参数 {dropped}，已自动忽略。")
+    else:
+        filtered_kwargs = kwargs
+
+    return infer_process_fn(**filtered_kwargs)
+
+
+def normalize_infer_output(output: Any) -> Tuple[Any, int, Any]:
+    """
+    统一 infer_process 返回值格式，兼容 tuple/dict/单值。
+    返回: (wav, sample_rate, meta)
+    """
+    if isinstance(output, tuple):
+        if len(output) >= 2:
+            meta = output[2] if len(output) >= 3 else None
+            return output[0], int(output[1]), meta
+        if len(output) == 1:
+            return output[0], 24000, None
+    if isinstance(output, dict):
+        wav = output.get("wav", output.get("audio", output.get("audio_np", None)))
+        sr = int(output.get("sample_rate", output.get("sr", 24000)))
+        return wav, sr, output
+    return output, 24000, None
+
+
 def build_extract_meta(
     dataset_dir: Path,
     selected_layers: Sequence[int],
@@ -799,18 +858,22 @@ def estimate_target_len_from_captured(
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
 
-            infer_process(
-                ref_audio=ref_audio_processed,
-                ref_text=ref_text_processed,
-                gen_text=gen_text,
-                model_obj=runtime.model,
-                vocoder=runtime.vocoder,
-                mel_spec_type=runtime.vocoder_name,
-                nfe_step=nfe_step,
-                cfg_strength=cfg_strength,
-                sway_sampling_coef=sway_sampling_coef,
-                device=runtime.device,
+            call_infer_process_compat(
+                infer_process_fn=infer_process,
+                call_kwargs={
+                    "ref_audio": ref_audio_processed,
+                    "ref_text": ref_text_processed,
+                    "gen_text": gen_text,
+                    "model_obj": runtime.model,
+                    "vocoder": runtime.vocoder,
+                    "mel_spec_type": runtime.vocoder_name,
+                    "nfe_step": nfe_step,
+                    "cfg_strength": cfg_strength,
+                    "sway_sampling_coef": sway_sampling_coef,
+                    "device": runtime.device,
+                },
                 seed=(sampling_seed + i - 1) if sampling_seed is not None else None,
+                logger=logger,
             )
 
             sample_len: Optional[int] = None
@@ -888,18 +951,22 @@ def extract_mean_activation(
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=cfg.nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
 
-            infer_process(
-                ref_audio=ref_audio_processed,
-                ref_text=ref_text_processed,
-                gen_text=gen_text,
-                model_obj=runtime.model,
-                vocoder=runtime.vocoder,
-                mel_spec_type=runtime.vocoder_name,
-                nfe_step=cfg.nfe_step,
-                cfg_strength=cfg.cfg_strength,
-                sway_sampling_coef=cfg.sway_sampling_coef,
-                device=runtime.device,
+            call_infer_process_compat(
+                infer_process_fn=infer_process,
+                call_kwargs={
+                    "ref_audio": ref_audio_processed,
+                    "ref_text": ref_text_processed,
+                    "gen_text": gen_text,
+                    "model_obj": runtime.model,
+                    "vocoder": runtime.vocoder,
+                    "mel_spec_type": runtime.vocoder_name,
+                    "nfe_step": cfg.nfe_step,
+                    "cfg_strength": cfg.cfg_strength,
+                    "sway_sampling_coef": cfg.sway_sampling_coef,
+                    "device": runtime.device,
+                },
                 seed=(cfg.sampling_seed + i - 1) if cfg.sampling_seed is not None else None,
+                logger=logger,
             )
 
             for local_idx, layer_idx in enumerate(selected_layers):
@@ -1118,21 +1185,26 @@ def evaluate_tokens_with_emotion2vec(
                 )
                 try:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        wav_np, sample_rate, _ = infer_process(
-                            ref_audio=ref["ref_audio"],
-                            ref_text=ref["ref_text"],
-                            gen_text=ref["gen_text"],
-                            model_obj=runtime.model,
-                            vocoder=runtime.vocoder,
-                            mel_spec_type=runtime.vocoder_name,
-                            show_info=lambda *_args, **_kwargs: None,
-                            progress=None,
-                            nfe_step=nfe_step,
-                            cfg_strength=cfg_strength,
-                            sway_sampling_coef=sway_sampling_coef,
-                            device=runtime.device,
+                        infer_output = call_infer_process_compat(
+                            infer_process_fn=infer_process,
+                            call_kwargs={
+                                "ref_audio": ref["ref_audio"],
+                                "ref_text": ref["ref_text"],
+                                "gen_text": ref["gen_text"],
+                                "model_obj": runtime.model,
+                                "vocoder": runtime.vocoder,
+                                "mel_spec_type": runtime.vocoder_name,
+                                "show_info": (lambda *_args, **_kwargs: None),
+                                "progress": None,
+                                "nfe_step": nfe_step,
+                                "cfg_strength": cfg_strength,
+                                "sway_sampling_coef": sway_sampling_coef,
+                                "device": runtime.device,
+                            },
                             seed=sampling_seed,
+                            logger=logger,
                         )
+                        wav_np, sample_rate, _ = normalize_infer_output(infer_output)
                 finally:
                     clear_token_steering(runtime.model, selected_layers)
 
@@ -1141,7 +1213,13 @@ def evaluate_tokens_with_emotion2vec(
                     continue
 
                 wav_path = temp_dir / f"token_{token_idx:04d}_ref_{ref_idx:02d}.wav"
-                save_wav = torch.from_numpy(wav_np).to(torch.float32)
+                if isinstance(wav_np, torch.Tensor):
+                    save_wav = wav_np.detach().to(torch.float32).cpu()
+                else:
+                    try:
+                        save_wav = torch.from_numpy(wav_np).to(torch.float32)
+                    except Exception:
+                        save_wav = torch.as_tensor(wav_np, dtype=torch.float32)
                 if save_wav.ndim == 1:
                     save_wav = save_wav.unsqueeze(0)
                 torchaudio.save(str(wav_path), save_wav.cpu(), int(sample_rate))
