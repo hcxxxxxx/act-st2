@@ -8,6 +8,7 @@ import contextlib
 import io
 import importlib
 import inspect
+import json
 import logging
 import random
 import shutil
@@ -64,6 +65,8 @@ EMOTION_KEYWORDS: Dict[str, List[str]] = {
     "surprised": ["surprise", "surprised", "惊讶"],
     "unknown": ["unknown", "未知"],
 }
+
+AUDIO_SUFFIXES: Set[str] = {".wav", ".flac", ".mp3", ".m4a", ".ogg", ".opus"}
 
 
 @dataclass
@@ -170,6 +173,8 @@ def infer_dataset_tag(dataset_dir: Path) -> str:
         return ""
     if name in {"dataset_esd_sorted", "esd"} or "esd" in name:
         return "esd"
+    if name in {"datasets_merged_intersection", "merged_intersection"} or "merged_intersection" in name:
+        return "merged_intersection"
     if "emilia" in name:
         return "emo_emilia"
     return safe_name(name)
@@ -201,13 +206,84 @@ def speaker_id_from_file(path: Path) -> str:
     return parts[0] if parts else path.stem
 
 
-def balanced_sample_by_speaker(files: Sequence[Path], max_samples: int, seed: Optional[int]) -> List[Path]:
+def _normalize_speaker_id(speaker: str) -> str:
+    s = str(speaker).strip()
+    if not s:
+        return ""
+    if s.isdigit():
+        return str(int(s))
+    return s.lower()
+
+
+def _speaker_match(speaker: str, speaker_filter: Set[str]) -> bool:
+    if not speaker_filter:
+        return True
+    raw = str(speaker).strip()
+    if raw in speaker_filter:
+        return True
+    norm_raw = _normalize_speaker_id(raw)
+    if not norm_raw:
+        return False
+    for x in speaker_filter:
+        if norm_raw == _normalize_speaker_id(x):
+            return True
+    return False
+
+
+def _iter_audio_files(base: Path) -> List[Path]:
+    if not base.exists():
+        return []
+    files: List[Path] = []
+    for p in sorted(base.rglob("*")):
+        if p.suffix.lower() not in AUDIO_SUFFIXES:
+            continue
+        if p.is_file() or p.is_symlink():
+            files.append(p)
+    return files
+
+
+def _load_manifest_speaker_map(dataset_dir: Path, emotion_subdir: str) -> Dict[str, str]:
+    """
+    merged 数据集结构下，从 manifests/<emotion>.jsonl 读取 uid->speaker 映射。
+    """
+    out: Dict[str, str] = {}
+    manifest = dataset_dir / "manifests" / f"{emotion_subdir}.jsonl"
+    if not manifest.exists():
+        return out
+    with manifest.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            uid = str(row.get("uid", "")).strip()
+            if not uid:
+                continue
+            speaker = str(row.get("speaker", "")).strip()
+            out[uid] = speaker
+    return out
+
+
+def balanced_sample_by_speaker(
+    files: Sequence[Path],
+    max_samples: int,
+    seed: Optional[int],
+    speaker_map: Optional[Dict[str, str]] = None,
+) -> List[Path]:
     if max_samples <= 0 or len(files) <= max_samples:
         return list(files)
     rng = random.Random(seed)
     by_speaker: Dict[str, List[Path]] = {}
     for wav in files:
-        by_speaker.setdefault(speaker_id_from_file(wav), []).append(wav)
+        sid = ""
+        if speaker_map is not None:
+            sid = str(speaker_map.get(wav.stem, "")).strip()
+        if not sid:
+            sid = speaker_id_from_file(wav)
+        by_speaker.setdefault(sid, []).append(wav)
 
     speaker_ids = sorted(by_speaker.keys())
     rng.shuffle(speaker_ids)
@@ -237,18 +313,65 @@ def collect_audio_files(
     max_samples: int,
     sample_seed: Optional[int],
 ) -> List[Path]:
-    base = dataset_dir / emotion_subdir
-    files = sorted(base.rglob("*.wav"))
+    merged_base = dataset_dir / "audio" / emotion_subdir
+    legacy_base = dataset_dir / emotion_subdir
+    use_merged = merged_base.exists()
+    base = merged_base if use_merged else legacy_base
+
+    files = _iter_audio_files(base)
+    speaker_map: Optional[Dict[str, str]] = None
+    if use_merged:
+        speaker_map = _load_manifest_speaker_map(dataset_dir, emotion_subdir)
+
     if speaker_filter:
-        files = [x for x in files if speaker_id_from_file(x) in speaker_filter]
+        if speaker_map:
+            files = [x for x in files if _speaker_match(speaker_map.get(x.stem, ""), speaker_filter)]
+        else:
+            files = [x for x in files if _speaker_match(speaker_id_from_file(x), speaker_filter)]
     if max_samples > 0:
-        files = balanced_sample_by_speaker(files, max_samples=max_samples, seed=sample_seed)
+        files = balanced_sample_by_speaker(
+            files,
+            max_samples=max_samples,
+            seed=sample_seed,
+            speaker_map=speaker_map,
+        )
     return files
 
 
 def load_transcription_map(dataset_dir: Path) -> Dict[str, str]:
-    tdir = dataset_dir / "transcription"
+    # 新结构优先：<dataset_dir>/subtitles/subtitles.jsonl
+    subtitles_jsonl = dataset_dir / "subtitles" / "subtitles.jsonl"
     mapping: Dict[str, str] = {}
+    if subtitles_jsonl.exists():
+        with subtitles_jsonl.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+
+                text = str(row.get("text", "")).strip()
+                if not text:
+                    continue
+
+                uid = str(row.get("uid", "")).strip()
+                if uid and uid not in mapping:
+                    mapping[uid] = text
+
+                audio = str(row.get("audio", row.get("src_audio", ""))).strip()
+                if audio:
+                    stem = Path(audio).stem
+                    if stem and stem not in mapping:
+                        mapping[stem] = text
+
+        if mapping:
+            return mapping
+
+    # 旧结构兜底：<dataset_dir>/transcription/*.txt
+    tdir = dataset_dir / "transcription"
     if not tdir.exists():
         return mapping
     for txt in sorted(tdir.glob("*.txt")):
@@ -1472,9 +1595,15 @@ def run_extract_stage(
     )
 
     if not neutral_files:
-        raise RuntimeError(f"[提取] neutral 目录为空: {cfg.dataset_dir / cfg.neutral}")
+        raise RuntimeError(
+            f"[提取] neutral 无可用音频。已检查: {cfg.dataset_dir / 'audio' / cfg.neutral} "
+            f"和 {cfg.dataset_dir / cfg.neutral}"
+        )
     if not emotion_files:
-        raise RuntimeError(f"[提取] emotion 目录为空: {cfg.dataset_dir / cfg.emotion}")
+        raise RuntimeError(
+            f"[提取] emotion 无可用音频。已检查: {cfg.dataset_dir / 'audio' / cfg.emotion} "
+            f"和 {cfg.dataset_dir / cfg.emotion}"
+        )
 
     logger.info(
         f"[提取] 样本统计 | neutral={len(neutral_files)} | emotion={len(emotion_files)} | "
@@ -1559,7 +1688,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--stages", type=str, default="extract,build", help="要执行的阶段，逗号分隔: extract,build,score,convert")
 
-    parser.add_argument("--dataset_dir", type=Path, required=True, help="数据集根目录，内部应包含 neutral/emotion 子目录")
+    parser.add_argument(
+        "--dataset_dir",
+        type=Path,
+        required=True,
+        help=(
+            "数据集根目录。支持两种结构："
+            "1) 旧版 <root>/<emotion>/*.wav + transcription/*.txt；"
+            "2) merged版 <root>/audio/<emotion>/*.wav + subtitles/subtitles.jsonl"
+        ),
+    )
     parser.add_argument("--emotion", type=str, required=True, help="目标情绪目录名，例如 sad")
     parser.add_argument("--neutral", type=str, default="neutral", help="中性目录名")
     parser.add_argument("--speaker_filter", type=str, default=None, help="说话人筛选，如 0010-0015 或 0010,0011")
