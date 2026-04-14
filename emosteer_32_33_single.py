@@ -11,6 +11,7 @@ import inspect
 import json
 import logging
 import random
+import re
 import shutil
 import subprocess
 import sys
