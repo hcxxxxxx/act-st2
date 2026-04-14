@@ -115,6 +115,7 @@ class ExtractionConfig:
     nfe_step: int
     cfg_strength: float
     sway_sampling_coef: float
+    min_ref_tokens: int
 
 
 @dataclass
@@ -1008,6 +1009,7 @@ def build_extract_meta(
         "nfe_step": int(cfg.nfe_step),
         "cfg_strength": float(cfg.cfg_strength),
         "sway_sampling_coef": float(cfg.sway_sampling_coef),
+        "min_ref_tokens": int(cfg.min_ref_tokens),
         "target_len_source": target_len_source,
     }
 
@@ -1023,6 +1025,7 @@ def estimate_target_len_from_captured(
     nfe_step: int,
     cfg_strength: float,
     sway_sampling_coef: float,
+    min_ref_tokens: int,
     transcription_map: Dict[str, str],
     logger: logging.Logger,
 ) -> int:
@@ -1035,6 +1038,8 @@ def estimate_target_len_from_captured(
     enable_residual_capture(runtime.model, selected_layers, nfe_step=nfe_step)
 
     captured_lens: List[int] = []
+    skipped_short = 0
+    skipped_no_capture = 0
     logger.info(f"[提取] 估计目标 token 长度 | 情绪={emotion_subdir} | 样本数={len(audio_files)}")
 
     try:
@@ -1054,6 +1059,14 @@ def estimate_target_len_from_captured(
 
             ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(wav_path), ref_text)
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
+            if ref_audio_len < int(min_ref_tokens):
+                skipped_short += 1
+                if skipped_short <= 20:
+                    logger.warning(
+                        f"[提取] 参考token过短，跳过样本 {wav_path.name} | "
+                        f"ref_tokens={ref_audio_len} < min_ref_tokens={int(min_ref_tokens)}"
+                    )
+                continue
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
 
             call_infer_process_with_retry(
@@ -1085,15 +1098,22 @@ def estimate_target_len_from_captured(
 
             if sample_len is not None:
                 captured_lens.append(sample_len)
-            if i == 1 and sample_len is None:
-                raise RuntimeError("第一条样本没有捕获到第一残差，hook 可能未生效。")
+            else:
+                skipped_no_capture += 1
             if i % 20 == 0 or i == len(audio_files):
                 logger.info(f"[提取] 目标长度估计进度: {i}/{len(audio_files)}")
     finally:
         disable_residual_capture(runtime.model)
 
     if not captured_lens:
-        raise RuntimeError(f"[提取] 未能估计目标 token 长度: {emotion_subdir}")
+        raise RuntimeError(
+            f"[提取] 未能估计目标 token 长度: {emotion_subdir} | "
+            f"skip_short={skipped_short} | skip_no_capture={skipped_no_capture}"
+        )
+
+    logger.info(
+        f"[提取] 长度估计过滤统计 | skip_short={skipped_short} | skip_no_capture={skipped_no_capture}"
+    )
 
     avg_len = max(1, int(round(sum(captured_lens) / len(captured_lens))))
     logger.info(
@@ -1125,6 +1145,7 @@ def extract_mean_activation(
 
     layer_sums: List[Optional[torch.Tensor]] = [None for _ in selected_layers]
     layer_counts: List[int] = [0 for _ in selected_layers]
+    skipped_short = 0
 
     logger.info(
         f"[提取] 开始提取第一残差均值 | emotion={emotion_subdir} | 样本={len(audio_files)} | "
@@ -1148,6 +1169,14 @@ def extract_mean_activation(
 
             ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(wav_path), ref_text)
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
+            if ref_audio_len < int(cfg.min_ref_tokens):
+                skipped_short += 1
+                if skipped_short <= 20:
+                    logger.warning(
+                        f"[提取] 参考token过短，跳过样本 {wav_path.name} | "
+                        f"ref_tokens={ref_audio_len} < min_ref_tokens={int(cfg.min_ref_tokens)}"
+                    )
+                continue
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=cfg.nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
 
             call_infer_process_with_retry(
@@ -1185,15 +1214,19 @@ def extract_mean_activation(
                     layer_sums[local_idx] += activation
                 layer_counts[local_idx] += 1
 
-            if i == 1 and not any(c > 0 for c in layer_counts):
-                raise RuntimeError("[提取] 第一条样本未捕获到任何第一残差，停止执行。")
             if i % 10 == 0 or i == len(audio_files):
                 logger.info(f"[提取] 进度 {emotion_subdir}: {i}/{len(audio_files)}")
     finally:
         disable_residual_capture(runtime.model)
 
     if not any(c > 0 for c in layer_counts):
-        raise RuntimeError(f"[提取] {emotion_subdir} 完全未捕获到残差。")
+        raise RuntimeError(
+            f"[提取] {emotion_subdir} 完全未捕获到残差。"
+            f" 可用样本={len(audio_files)} | skip_short={skipped_short}"
+        )
+
+    if skipped_short > 0:
+        logger.info(f"[提取] 过滤统计 {emotion_subdir} | skip_short={skipped_short}")
 
     mean_residuals: List[Optional[torch.Tensor]] = []
     for s, c in zip(layer_sums, layer_counts):
@@ -1654,6 +1687,7 @@ def run_extract_stage(
         nfe_step=args.nfe_step,
         cfg_strength=args.cfg_strength,
         sway_sampling_coef=args.sway_sampling_coef,
+        min_ref_tokens=args.min_ref_tokens,
     )
 
     speaker_filter = parse_speaker_filter(cfg.speaker_filter)
@@ -1701,6 +1735,7 @@ def run_extract_stage(
         nfe_step=cfg.nfe_step,
         cfg_strength=cfg.cfg_strength,
         sway_sampling_coef=cfg.sway_sampling_coef,
+        min_ref_tokens=cfg.min_ref_tokens,
         transcription_map=trans_map,
         logger=logger,
     )
@@ -1715,6 +1750,7 @@ def run_extract_stage(
         nfe_step=cfg.nfe_step,
         cfg_strength=cfg.cfg_strength,
         sway_sampling_coef=cfg.sway_sampling_coef,
+        min_ref_tokens=cfg.min_ref_tokens,
         transcription_map=trans_map,
         logger=logger,
     )
@@ -1790,6 +1826,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text_seed", type=int, default=1234)
 
     parser.add_argument("--nfe_step", type=int, default=32)
+    parser.add_argument("--min_ref_tokens", type=int, default=32, help="提取阶段最小参考token长度，低于该值样本会被跳过")
     parser.add_argument("--cfg_strength", type=float, default=2.0)
     parser.add_argument("--sway_sampling_coef", type=float, default=-1.0)
     parser.add_argument("--step_aggregation_mode", type=str, choices=["per_step", "mean_repeat"], default="per_step")
@@ -1850,7 +1887,8 @@ def main() -> None:
     logger.info("========== EmoSteer 3.2/3.3 单脚本流程开始 ==========")
     logger.info(
         f"[参数] emotion={args.emotion} | neutral={args.neutral} | stages={args.stages} | "
-        f"top_k={args.top_k} | max_samples={args.max_samples} | search_samples={args.search_samples}"
+        f"top_k={args.top_k} | max_samples={args.max_samples} | search_samples={args.search_samples} | "
+        f"min_ref_tokens={args.min_ref_tokens}"
     )
     set_global_seed(args.seed)
 
