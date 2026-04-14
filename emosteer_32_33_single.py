@@ -424,6 +424,40 @@ def select_generation_text(
     return preferred[start]
 
 
+def sanitize_gen_text_for_single_batch(
+    gen_text: str,
+    ref_text: str = "",
+    fallback_text: str = "This is a sample text for activation extraction",
+    max_bytes: int = 80,
+) -> str:
+    """
+    规整生成文本，尽量确保 F5 infer_process 只产生 1 个文本 batch：
+    - 取首行、首句；
+    - 去掉会触发 chunk_text 分句的标点；
+    - 控制长度，避免极端时长估计。
+    """
+    txt = str(gen_text or "").strip()
+    if not txt:
+        txt = str(ref_text or "").strip()
+    if not txt:
+        txt = fallback_text
+
+    txt = txt.splitlines()[0].strip()
+    txt = re.split(r"[。！？!?;；:：]+", txt, maxsplit=1)[0].strip()
+    txt = re.sub(r"[,，、.。]", " ", txt)
+    txt = re.sub(r"\s+", " ", txt).strip()
+
+    if len(txt.encode("utf-8")) > int(max_bytes):
+        cut = txt
+        while cut and len(cut.encode("utf-8")) > int(max_bytes):
+            cut = cut[:-1]
+        txt = cut.strip()
+
+    if not txt:
+        txt = fallback_text
+    return txt
+
+
 def _is_f5_tts_importable() -> bool:
     try:
         importlib.import_module("f5_tts")
@@ -895,6 +929,45 @@ def call_infer_process_compat(
     return infer_process_fn(**filtered_kwargs)
 
 
+def call_infer_process_with_retry(
+    infer_process_fn: Any,
+    call_kwargs: Dict[str, Any],
+    seed: Optional[int],
+    logger: Optional[logging.Logger] = None,
+) -> Any:
+    """
+    调用 infer_process，并在常见的长度不一致错误上做一次短文本重试。
+    """
+    try:
+        return call_infer_process_compat(
+            infer_process_fn=infer_process_fn,
+            call_kwargs=call_kwargs,
+            seed=seed,
+            logger=logger,
+        )
+    except RuntimeError as e:
+        msg = str(e)
+        if "Sizes of tensors must match" not in msg:
+            raise
+
+        retry_kwargs = dict(call_kwargs)
+        fallback_text = "This is a sample text for activation extraction"
+        retry_kwargs["gen_text"] = sanitize_gen_text_for_single_batch(
+            gen_text=fallback_text,
+            ref_text=str(call_kwargs.get("ref_text", "")),
+            fallback_text=fallback_text,
+            max_bytes=48,
+        )
+        if logger is not None:
+            logger.warning("[兼容] infer_process 出现长度不一致，已使用短文本重试一次。")
+        return call_infer_process_compat(
+            infer_process_fn=infer_process_fn,
+            call_kwargs=retry_kwargs,
+            seed=seed,
+            logger=logger,
+        )
+
+
 def normalize_infer_output(output: Any) -> Tuple[Any, int, Any]:
     """
     统一 infer_process 返回值格式，兼容 tuple/dict/单值。
@@ -970,7 +1043,8 @@ def estimate_target_len_from_captured(
             if text_mode == "random_pool":
                 gen_text = select_generation_text(text_pools, i - 1, ref_text)
             else:
-                gen_text = ref_text or "This is a sample text for activation extraction."
+                gen_text = ref_text or "This is a sample text for activation extraction"
+            gen_text = sanitize_gen_text_for_single_batch(gen_text=gen_text, ref_text=ref_text)
 
             for layer_idx in selected_layers:
                 block = runtime.model.transformer.transformer_blocks[layer_idx]
@@ -981,7 +1055,7 @@ def estimate_target_len_from_captured(
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
 
-            call_infer_process_compat(
+            call_infer_process_with_retry(
                 infer_process_fn=infer_process,
                 call_kwargs={
                     "ref_audio": ref_audio_processed,
@@ -1063,7 +1137,8 @@ def extract_mean_activation(
             if cfg.text_mode == "random_pool":
                 gen_text = select_generation_text(text_pools, i - 1, ref_text)
             else:
-                gen_text = ref_text or "This is a sample text for activation extraction."
+                gen_text = ref_text or "This is a sample text for activation extraction"
+            gen_text = sanitize_gen_text_for_single_batch(gen_text=gen_text, ref_text=ref_text)
 
             for layer_idx in selected_layers:
                 block = runtime.model.transformer.transformer_blocks[layer_idx]
@@ -1074,7 +1149,7 @@ def extract_mean_activation(
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=cfg.nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
 
-            call_infer_process_compat(
+            call_infer_process_with_retry(
                 infer_process_fn=infer_process,
                 call_kwargs={
                     "ref_audio": ref_audio_processed,
@@ -1224,11 +1299,13 @@ def build_search_references(
 
     out: List[SearchReference] = []
     for i, item in enumerate(selected[:num_refs]):
+        gen_text = select_generation_text(pools, i, item["ref_text"])
+        gen_text = sanitize_gen_text_for_single_batch(gen_text=gen_text, ref_text=item["ref_text"])
         out.append(
             SearchReference(
                 ref_audio=item["ref_audio"],
                 ref_text=item["ref_text"],
-                gen_text=select_generation_text(pools, i, item["ref_text"]),
+                gen_text=gen_text,
                 file_id=item["file_id"],
             )
         )
@@ -1271,11 +1348,12 @@ def evaluate_tokens_with_emotion2vec(
     processed_refs: List[Dict[str, Any]] = []
     for ref in references:
         ref_audio_path, ref_text = preprocess_ref_audio_text(ref.ref_audio, ref.ref_text)
+        safe_gen_text = sanitize_gen_text_for_single_batch(gen_text=ref.gen_text, ref_text=ref_text)
         processed_refs.append(
             {
                 "ref_audio": ref_audio_path,
                 "ref_text": ref_text,
-                "gen_text": ref.gen_text,
+                "gen_text": safe_gen_text,
                 "file_id": ref.file_id,
                 "ref_audio_len": estimate_ref_audio_token_len(str(ref_audio_path)),
             }
@@ -1308,7 +1386,7 @@ def evaluate_tokens_with_emotion2vec(
                 )
                 try:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        infer_output = call_infer_process_compat(
+                        infer_output = call_infer_process_with_retry(
                             infer_process_fn=infer_process,
                             call_kwargs={
                                 "ref_audio": ref["ref_audio"],
