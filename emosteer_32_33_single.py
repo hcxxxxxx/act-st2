@@ -117,6 +117,7 @@ class ExtractionConfig:
     sway_sampling_coef: float
     min_ref_tokens: int
     target_len_mode: str
+    debug_verbose: bool
 
 
 @dataclass
@@ -133,6 +134,7 @@ class BuildConfig:
     min_search_ref_tokens: int
     step_aggregation_mode: str
     post_agg_norm: bool
+    debug_verbose: bool
 
 
 def setup_logger(log_file: Path) -> logging.Logger:
@@ -696,6 +698,7 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
                     raise RuntimeError(f"step_steering 维度不支持: {tuple(step_steering.shape)}")
 
                 act = act.to(device=x.device, dtype=x.dtype)
+                act = act / (act.norm(p=2) + 1e-8)
                 act = act.unsqueeze(0).repeat(ref_audio_len, 1).unsqueeze(0)  # [1, ref_len, D]
 
                 pad_len = x.shape[1] - ref_audio_len
@@ -707,7 +710,7 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
                 steer[:cond_batch] = act.expand(cond_batch, -1, -1)
                 alpha = float(getattr(self, "alpha", 1.0))
 
-                # Eq.2 / Eq.8 中 f_r 只对注入后的激活做范数回缩，不额外归一化 token 向量。
+                # 参考附录实现：注入前先对 act 单位化，再按 Eq.2/Eq.8 的 f_r 做范数回缩。
                 orig_norm = x.norm(p=2, dim=(1, 2), keepdim=True)
                 x = x + alpha * steer
                 new_norm = x.norm(p=2, dim=(1, 2), keepdim=True) + 1e-8
@@ -1012,6 +1015,7 @@ def build_extract_meta(
         "cfg_strength": float(cfg.cfg_strength),
         "sway_sampling_coef": float(cfg.sway_sampling_coef),
         "min_ref_tokens": int(cfg.min_ref_tokens),
+        "debug_verbose": bool(cfg.debug_verbose),
         "target_len_source": target_len_source,
     }
 
@@ -1029,6 +1033,7 @@ def estimate_target_len_from_captured(
     sway_sampling_coef: float,
     min_ref_tokens: int,
     fast_ref_only: bool,
+    debug_verbose: bool,
     transcription_map: Dict[str, str],
     logger: logging.Logger,
 ) -> int:
@@ -1067,6 +1072,11 @@ def estimate_target_len_from_captured(
 
             ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(wav_path), ref_text)
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
+            if debug_verbose and (i <= 20 or i % 50 == 0):
+                logger.info(
+                    f"[提取-细节] 长度估计样本 | idx={i} | file={wav_path.name} | "
+                    f"ref_tokens={ref_audio_len} | gen_text='{gen_text[:80]}'"
+                )
             if ref_audio_len < int(min_ref_tokens):
                 skipped_short += 1
                 if skipped_short <= 20:
@@ -1112,8 +1122,16 @@ def estimate_target_len_from_captured(
 
             if sample_len is not None:
                 captured_lens.append(sample_len)
+                if debug_verbose and (i <= 20 or i % 50 == 0):
+                    logger.info(
+                        f"[提取-细节] 捕获长度 | idx={i} | file={wav_path.name} | captured_tokens={sample_len}"
+                    )
             else:
                 skipped_no_capture += 1
+                if debug_verbose:
+                    logger.warning(
+                        f"[提取-细节] 未捕获到残差长度 | idx={i} | file={wav_path.name}"
+                    )
             if i % 20 == 0 or i == len(audio_files):
                 logger.info(f"[提取] 目标长度估计进度: {i}/{len(audio_files)}")
     finally:
@@ -1184,6 +1202,11 @@ def extract_mean_activation(
 
             ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(wav_path), ref_text)
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
+            if cfg.debug_verbose and (i <= 20 or i % 50 == 0):
+                logger.info(
+                    f"[提取-细节] 均值提取样本 | idx={i} | file={wav_path.name} | "
+                    f"ref_tokens={ref_audio_len} | gen_text='{gen_text[:80]}'"
+                )
             if ref_audio_len < int(cfg.min_ref_tokens):
                 skipped_short += 1
                 if skipped_short <= 20:
@@ -1216,6 +1239,10 @@ def extract_mean_activation(
                 block = runtime.model.transformer.transformer_blocks[layer_idx]
                 tokens = fill_missing_steps(block.step_residual_tokens or [], cfg.nfe_step)
                 if tokens is None:
+                    if cfg.debug_verbose and i <= 20:
+                        logger.warning(
+                            f"[提取-细节] 层无token捕获 | idx={i} | file={wav_path.name} | layer={layer_idx}"
+                        )
                     continue
                 activation = torch.stack(tokens, dim=0).to(torch.float32)  # [steps, ref_len, d]
                 if target_len > 0 and activation.shape[1] != target_len:
@@ -1228,6 +1255,14 @@ def extract_mean_activation(
                 else:
                     layer_sums[local_idx] += activation
                 layer_counts[local_idx] += 1
+
+            if cfg.debug_verbose and (i <= 20 or i % 50 == 0):
+                per_layer_states = ", ".join(
+                    [f"L{li}:{layer_counts[idx]}" for idx, li in enumerate(selected_layers)]
+                )
+                logger.info(
+                    f"[提取-细节] 累计计数 | idx={i} | file={wav_path.name} | {per_layer_states}"
+                )
 
             if i % 10 == 0 or i == len(audio_files):
                 logger.info(f"[提取] 进度 {emotion_subdir}: {i}/{len(audio_files)}")
@@ -1285,6 +1320,7 @@ def build_search_references(
     speaker_filter: Optional[Set[str]],
     exclude_file_ids: Optional[Sequence[str]],
     seed: int,
+    debug_verbose: bool,
     logger: logging.Logger,
 ) -> List[SearchReference]:
     all_neutral = collect_audio_files(
@@ -1359,6 +1395,12 @@ def build_search_references(
             )
         )
     logger.info(f"[搜索样本] 已构建 emotion2vec 搜索样本: {len(out)}")
+    if debug_verbose:
+        for idx, item in enumerate(selected[:num_refs], start=1):
+            logger.info(
+                f"[搜索样本-细节] ref#{idx:02d} | file_id={item['file_id']} | "
+                f"lang={item['lang']} | ref_text='{str(item['ref_text'])[:80]}'"
+            )
     return out
 
 
@@ -1374,6 +1416,7 @@ def evaluate_tokens_with_emotion2vec(
     sway_sampling_coef: float,
     min_search_ref_tokens: int,
     sampling_seed: Optional[int],
+    debug_verbose: bool,
     logger: logging.Logger,
 ) -> torch.Tensor:
     from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
@@ -1394,6 +1437,14 @@ def evaluate_tokens_with_emotion2vec(
     for vec in normalized_vectors[1:]:
         if vec.shape[:2] != (steps, num_tokens):
             raise ValueError("各层 steering shape 不一致。")
+    if debug_verbose:
+        for li, vec in zip(selected_layers, normalized_vectors):
+            v = vec.float()
+            logger.info(
+                f"[Token评分-细节] 层向量统计 | layer={li} | shape={tuple(v.shape)} | "
+                f"min={float(v.min().item()):.6f} | max={float(v.max().item()):.6f} | "
+                f"mean={float(v.mean().item()):.6f} | std={float(v.std().item()):.6f}"
+            )
 
     processed_refs: List[Dict[str, Any]] = []
     skipped_short_refs = 0
@@ -1438,8 +1489,22 @@ def evaluate_tokens_with_emotion2vec(
             single_token_scores: List[float] = []
             model_dtype = next(runtime.model.parameters()).dtype
             token_vecs = [layer[:, token_idx, :].to(dtype=model_dtype) for layer in normalized_vectors]
+            if debug_verbose and token_idx < 3:
+                norm_msg = ", ".join(
+                    [
+                        f"L{li}:{float(tv.float().norm(p=2).item()):.6f}"
+                        for li, tv in zip(selected_layers, token_vecs)
+                    ]
+                )
+                logger.info(f"[Token评分-细节] token={token_idx:04d} 各层向量范数 | {norm_msg}")
 
             for ref_idx, ref in enumerate(processed_refs):
+                if debug_verbose and token_idx < 3 and ref_idx < 3:
+                    logger.info(
+                        f"[Token评分-细节] token={token_idx:04d} ref={ref_idx:02d} | "
+                        f"file_id={ref['file_id']} | ref_tokens={ref['ref_audio_len']} | "
+                        f"gen_text='{str(ref['gen_text'])[:80]}'"
+                    )
                 set_runtime_context_for_all_blocks(
                     runtime.model,
                     nfe_step=nfe_step,
@@ -1481,6 +1546,10 @@ def evaluate_tokens_with_emotion2vec(
 
                 if wav_np is None:
                     single_token_scores.append(0.0)
+                    if debug_verbose and token_idx < 3 and ref_idx < 3:
+                        logger.warning(
+                            f"[Token评分-细节] token={token_idx:04d} ref={ref_idx:02d} infer_output为空，记0分"
+                        )
                     continue
 
                 wav_path = temp_dir / f"token_{token_idx:04d}_ref_{ref_idx:02d}.wav"
@@ -1508,8 +1577,23 @@ def evaluate_tokens_with_emotion2vec(
                         target_idx_resolved = True
                     scores = ser_result[0].get("scores", [])
                     single_token_scores.append(float(scores[target_idx]) if len(scores) > target_idx else 0.0)
+                    if debug_verbose and token_idx < 3 and ref_idx < 3:
+                        top_idx = int(max(range(len(scores)), key=lambda i: scores[i])) if scores else -1
+                        top_label = labels[top_idx] if labels and 0 <= top_idx < len(labels) else "N/A"
+                        top_score = float(scores[top_idx]) if scores and 0 <= top_idx < len(scores) else 0.0
+                        tgt_score = float(scores[target_idx]) if len(scores) > target_idx else 0.0
+                        score_sum = float(sum(scores)) if scores else 0.0
+                        logger.info(
+                            f"[Token评分-细节] token={token_idx:04d} ref={ref_idx:02d} | "
+                            f"target_score={tgt_score:.6f} | top1={top_label}:{top_score:.6f} | "
+                            f"sum_scores={score_sum:.6f}"
+                        )
                 else:
                     single_token_scores.append(0.0)
+                    if debug_verbose and token_idx < 3 and ref_idx < 3:
+                        logger.warning(
+                            f"[Token评分-细节] token={token_idx:04d} ref={ref_idx:02d} emotion2vec无结果，记0分"
+                        )
 
             token_scores.append(sum(single_token_scores) / max(1, len(single_token_scores)))
             if (token_idx + 1) % 10 == 0 or token_idx == num_tokens - 1:
@@ -1562,6 +1646,20 @@ def build_steering_bundle(
 ) -> Dict[str, Any]:
     neutral_pack = load_residual_pack(neutral_residual_file)
     emotion_pack = load_residual_pack(emotion_residual_file)
+    if cfg.debug_verbose:
+        logger.info(
+            f"[构建-细节] 输入残差文件 | neutral={neutral_residual_file} | emotion={emotion_residual_file}"
+        )
+        logger.info(
+            f"[构建-细节] neutral元信息 | target_len={neutral_pack.get('target_len', None)} | "
+            f"num_samples={neutral_pack.get('num_samples', None)} | "
+            f"layer_counts={neutral_pack.get('layer_counts', None)}"
+        )
+        logger.info(
+            f"[构建-细节] emotion元信息 | target_len={emotion_pack.get('target_len', None)} | "
+            f"num_samples={emotion_pack.get('num_samples', None)} | "
+            f"layer_counts={emotion_pack.get('layer_counts', None)}"
+        )
 
     neutral_layers = neutral_pack["layers"]
     emotion_layers = emotion_pack["layers"]
@@ -1597,6 +1695,8 @@ def build_steering_bundle(
 
     if not unnormalized_vectors:
         raise RuntimeError("[构建] 没有可用层，无法构建 steering。")
+    if cfg.debug_verbose:
+        logger.info(f"[构建-细节] 可用层数量={len(active_layers)} | layers={active_layers}")
 
     trans_map = load_transcription_map(dataset_dir)
     exclude_ids = neutral_pack.get("meta", {}).get("selected_file_ids", [])
@@ -1608,6 +1708,7 @@ def build_steering_bundle(
         speaker_filter=parse_speaker_filter(speaker_filter),
         exclude_file_ids=exclude_ids,
         seed=cfg.sampling_seed if cfg.sampling_seed is not None else 1234,
+        debug_verbose=cfg.debug_verbose,
         logger=logger,
     )
     ser_model = load_emotion2vec_model(cfg.emotion2vec_model, cfg.emotion2vec_hub, logger=logger)
@@ -1623,11 +1724,19 @@ def build_steering_bundle(
         sway_sampling_coef=cfg.sway_sampling_coef,
         min_search_ref_tokens=cfg.min_search_ref_tokens,
         sampling_seed=cfg.sampling_seed,
+        debug_verbose=cfg.debug_verbose,
         logger=logger,
     )
 
     if not torch.isfinite(token_importance).all():
         raise RuntimeError("[构建] token 分数出现 NaN/Inf。")
+    if cfg.debug_verbose:
+        ti = token_importance.float()
+        logger.info(
+            f"[构建-细节] token_importance统计 | len={ti.numel()} | "
+            f"min={float(ti.min().item()):.6f} | max={float(ti.max().item()):.6f} | "
+            f"mean={float(ti.mean().item()):.6f} | std={float(ti.std().item() if ti.numel()>1 else 0.0):.6f}"
+        )
 
     sorted_scores, sorted_indices = torch.sort(token_importance, descending=True)
     logger.info("[构建] 全部 token 排序分数如下（按降序）:")
@@ -1643,6 +1752,15 @@ def build_steering_bundle(
         top_indices = sorted_indices[:top_k]
         top_values = sorted_scores[:top_k]
     weights = F.softmax(top_values, dim=0)
+    if cfg.debug_verbose:
+        logger.info(
+            f"[构建-细节] top_k选择 | k={int(top_k)} | top_indices前10={top_indices[:10].tolist()} | "
+            f"top_values前10={[float(x) for x in top_values[:10].tolist()]}"
+        )
+        logger.info(
+            f"[构建-细节] softmax权重前10={[float(x) for x in weights[:10].tolist()]} | "
+            f"weight_sum={float(weights.sum().item()):.6f}"
+        )
 
     steering_steps: List[torch.Tensor] = []
     for ul in unnormalized_vectors:
@@ -1667,6 +1785,13 @@ def build_steering_bundle(
             step_steer = step_steer / (step_steer.norm(p=2) + 1e-8)
         if not torch.isfinite(step_steer).all():
             raise RuntimeError("[构建] step steering 出现 NaN/Inf。")
+        if cfg.debug_verbose:
+            logger.info(
+                f"[构建-细节] 层step_steer统计 | layer={active_layers[len(steering_steps)]} | "
+                f"shape={tuple(step_steer.shape)} | min={float(step_steer.min().item()):.6f} | "
+                f"max={float(step_steer.max().item()):.6f} | mean={float(step_steer.mean().item()):.6f} | "
+                f"std={float(step_steer.std().item() if step_steer.numel()>1 else 0.0):.6f}"
+            )
         steering_steps.append(step_steer.cpu())
 
     step_counts = {int(x.shape[0]) for x in steering_steps}
@@ -1698,6 +1823,7 @@ def build_steering_bundle(
             "step_aggregation_mode": cfg.step_aggregation_mode,
             "search_samples": int(cfg.search_samples),
             "min_search_ref_tokens": int(cfg.min_search_ref_tokens),
+            "debug_verbose": bool(cfg.debug_verbose),
         },
     }
     torch.save(bundle, output_file)
@@ -1748,6 +1874,7 @@ def run_extract_stage(
         sway_sampling_coef=args.sway_sampling_coef,
         min_ref_tokens=args.min_ref_tokens,
         target_len_mode=args.target_len_mode,
+        debug_verbose=bool(args.debug_verbose),
     )
 
     speaker_filter = parse_speaker_filter(cfg.speaker_filter)
@@ -1797,6 +1924,7 @@ def run_extract_stage(
         sway_sampling_coef=cfg.sway_sampling_coef,
         min_ref_tokens=cfg.min_ref_tokens,
         fast_ref_only=(cfg.target_len_mode == "ref_audio"),
+        debug_verbose=cfg.debug_verbose,
         transcription_map=trans_map,
         logger=logger,
     )
@@ -1813,6 +1941,7 @@ def run_extract_stage(
         sway_sampling_coef=cfg.sway_sampling_coef,
         min_ref_tokens=cfg.min_ref_tokens,
         fast_ref_only=(cfg.target_len_mode == "ref_audio"),
+        debug_verbose=cfg.debug_verbose,
         transcription_map=trans_map,
         logger=logger,
     )
@@ -1906,6 +2035,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sway_sampling_coef", type=float, default=-1.0)
     parser.add_argument("--step_aggregation_mode", type=str, choices=["per_step", "mean_repeat"], default="per_step")
     parser.add_argument("--post_agg_norm", action="store_true")
+    parser.add_argument(
+        "--debug_verbose",
+        action="store_true",
+        help="开启详细诊断日志（用于排查提取/构建/打分阶段问题）",
+    )
 
     parser.add_argument("--model_name", type=str, default="F5TTS_v1_Base")
     parser.add_argument("--vocoder_name", type=str, default="vocos")
@@ -1964,7 +2098,7 @@ def main() -> None:
         f"[参数] emotion={args.emotion} | neutral={args.neutral} | stages={args.stages} | "
         f"top_k={args.top_k} | max_samples={args.max_samples} | search_samples={args.search_samples} | "
         f"min_ref_tokens={args.min_ref_tokens} | min_search_ref_tokens={args.min_search_ref_tokens} | "
-        f"target_len_mode={args.target_len_mode}"
+        f"target_len_mode={args.target_len_mode} | debug_verbose={bool(args.debug_verbose)}"
     )
     set_global_seed(args.seed)
 
@@ -2031,6 +2165,7 @@ def main() -> None:
             min_search_ref_tokens=args.min_search_ref_tokens,
             step_aggregation_mode=args.step_aggregation_mode,
             post_agg_norm=bool(args.post_agg_norm),
+            debug_verbose=bool(args.debug_verbose),
         )
         build_steering_bundle(
             runtime=runtime,
