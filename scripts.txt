@@ -3,19 +3,22 @@ python emosteer_32_33_single.py \
   --dataset_dir /mnt/workspace/hongchengxun/emosteer/act-st2/datasets_merged_intersection \
   --emotion angry \
   --neutral neutral \
-  --top_k 40 \
-  --max_samples 500 \
+  --top_k 10 \
+  --max_samples 100 \
   --search_samples 10 \
   --seed 1234 \
   --layers paper \
   --target_len_mode ref_audio \
   --debug_verbose \
   --min_search_ref_tokens 32 \
+  --min_ref_text_en_words 3 \
+  --min_ref_text_zh_chars 6 \
+  --prune_bad_samples \
   --output_dir /mnt/workspace/hongchengxun/emosteer/act-st2/outputs \
-  --neutral_residual_pt neutral_for_sad_residual.pt \
-  --emotion_residual_pt sad_residual.pt \
-  --steering_pt sad_steering.pt \
-  --log_file /mnt/workspace/hongchengxun/emosteer/act-st2/outputs/run.log
+  --neutral_residual_pt neutral_for_angry_residual.pt \
+  --emotion_residual_pt angry_residual.pt \
+  --steering_pt angry_steering.pt \
+  --log_file /mnt/workspace/hongchengxun/emosteer/act-st2/outputs/run_20260416_v2.log
 
 ####
   --target_len_mode ref_audio：只根据 preprocess_ref_audio_text 后的参考音频长度估计 token 长度（默认）
