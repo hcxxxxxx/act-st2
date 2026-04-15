@@ -129,6 +129,7 @@ class BuildConfig:
     sampling_seed: Optional[int]
     emotion2vec_model: str
     emotion2vec_hub: str
+    min_search_ref_tokens: int
     step_aggregation_mode: str
     post_agg_norm: bool
 
@@ -694,7 +695,6 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
                     raise RuntimeError(f"step_steering 维度不支持: {tuple(step_steering.shape)}")
 
                 act = act.to(device=x.device, dtype=x.dtype)
-                act = act / (act.norm(p=2) + 1e-8)
                 act = act.unsqueeze(0).repeat(ref_audio_len, 1).unsqueeze(0)  # [1, ref_len, D]
 
                 pad_len = x.shape[1] - ref_audio_len
@@ -706,6 +706,7 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
                 steer[:cond_batch] = act.expand(cond_batch, -1, -1)
                 alpha = float(getattr(self, "alpha", 1.0))
 
+                # Eq.2 / Eq.8 中 f_r 只对注入后的激活做范数回缩，不额外归一化 token 向量。
                 orig_norm = x.norm(p=2, dim=(1, 2), keepdim=True)
                 x = x + alpha * steer
                 new_norm = x.norm(p=2, dim=(1, 2), keepdim=True) + 1e-8
@@ -1357,6 +1358,7 @@ def evaluate_tokens_with_emotion2vec(
     nfe_step: int,
     cfg_strength: float,
     sway_sampling_coef: float,
+    min_search_ref_tokens: int,
     sampling_seed: Optional[int],
     logger: logging.Logger,
 ) -> torch.Tensor:
@@ -1380,8 +1382,18 @@ def evaluate_tokens_with_emotion2vec(
             raise ValueError("各层 steering shape 不一致。")
 
     processed_refs: List[Dict[str, Any]] = []
+    skipped_short_refs = 0
     for ref in references:
         ref_audio_path, ref_text = preprocess_ref_audio_text(ref.ref_audio, ref.ref_text)
+        ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_path))
+        if ref_audio_len < int(min_search_ref_tokens):
+            skipped_short_refs += 1
+            if skipped_short_refs <= 20:
+                logger.warning(
+                    f"[Token评分] 搜索参考过短，跳过: file_id={ref.file_id} | "
+                    f"ref_tokens={ref_audio_len} < min_search_ref_tokens={int(min_search_ref_tokens)}"
+                )
+            continue
         safe_gen_text = sanitize_gen_text_for_single_batch(gen_text=ref.gen_text, ref_text=ref_text)
         processed_refs.append(
             {
@@ -1389,13 +1401,23 @@ def evaluate_tokens_with_emotion2vec(
                 "ref_text": ref_text,
                 "gen_text": safe_gen_text,
                 "file_id": ref.file_id,
-                "ref_audio_len": estimate_ref_audio_token_len(str(ref_audio_path)),
+                "ref_audio_len": ref_audio_len,
             }
+        )
+
+    if not processed_refs:
+        raise RuntimeError(
+            f"[Token评分] 没有可用搜索参考（全部被过滤或为空）。"
+            f" refs_total={len(references)} | skipped_short_refs={skipped_short_refs}"
         )
 
     temp_dir = Path(tempfile.mkdtemp(prefix="emosteer_ser_"))
     token_scores: List[float] = []
-    logger.info(f"[Token评分] emotion2vec 全 token 搜索开始 | tokens={num_tokens} | refs={len(processed_refs)}")
+    logger.info(
+        f"[Token评分] emotion2vec 全 token 搜索开始 | tokens={num_tokens} | refs={len(processed_refs)} | "
+        f"skip_short_refs={skipped_short_refs} | min_search_ref_tokens={int(min_search_ref_tokens)}"
+    )
+    num_labels: Optional[int] = None
 
     try:
         for token_idx in range(num_tokens):
@@ -1462,6 +1484,9 @@ def evaluate_tokens_with_emotion2vec(
                 ser_result = ser_model.generate(str(wav_path), granularity="utterance", extract_embedding=False)
                 if ser_result and len(ser_result) > 0:
                     labels = ser_result[0].get("labels", [])
+                    if num_labels is None and isinstance(labels, list) and labels:
+                        num_labels = len(labels)
+                        logger.info(f"[Token评分-诊断] emotion2vec 标签数={num_labels} | labels={labels}")
                     if not target_idx_resolved:
                         target_idx = resolve_target_index_from_labels(labels, canonical)
                         mapped = labels[target_idx] if labels and len(labels) > target_idx else f"idx={target_idx}"
@@ -1482,7 +1507,25 @@ def evaluate_tokens_with_emotion2vec(
         clear_token_steering(runtime.model, selected_layers)
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    return torch.tensor(token_scores, dtype=torch.float32, device=runtime.device)
+    token_scores_t = torch.tensor(token_scores, dtype=torch.float32, device=runtime.device)
+    if token_scores_t.numel() > 0:
+        tmin = float(torch.min(token_scores_t).item())
+        tmax = float(torch.max(token_scores_t).item())
+        tmean = float(torch.mean(token_scores_t).item())
+        tstd = float(torch.std(token_scores_t).item()) if token_scores_t.numel() > 1 else 0.0
+        logger.info(
+            f"[Token评分-诊断] 分数统计 | min={tmin:.6f} | max={tmax:.6f} | "
+            f"mean={tmean:.6f} | std={tstd:.6f}"
+        )
+        if num_labels is not None and num_labels > 0:
+            uniform = 1.0 / float(num_labels)
+            logger.info(f"[Token评分-诊断] 均匀分布基线(1/{num_labels})={uniform:.6f}")
+            if abs(tmean - uniform) < 0.01 and (tmax - tmin) < 0.02:
+                logger.warning(
+                    "[Token评分-诊断] 分数整体接近均匀分布，情感注入信号较弱。"
+                    "建议检查 target label 映射、参考样本质量与 alpha。"
+                )
+    return token_scores_t
 
 
 def load_residual_pack(path: Path) -> Dict[str, Any]:
@@ -1564,6 +1607,7 @@ def build_steering_bundle(
         nfe_step=cfg.nfe_step,
         cfg_strength=cfg.cfg_strength,
         sway_sampling_coef=cfg.sway_sampling_coef,
+        min_search_ref_tokens=cfg.min_search_ref_tokens,
         sampling_seed=cfg.sampling_seed,
         logger=logger,
     )
@@ -1639,6 +1683,7 @@ def build_steering_bundle(
             "build_sampling_seed": int(cfg.sampling_seed) if cfg.sampling_seed is not None else None,
             "step_aggregation_mode": cfg.step_aggregation_mode,
             "search_samples": int(cfg.search_samples),
+            "min_search_ref_tokens": int(cfg.min_search_ref_tokens),
         },
     }
     torch.save(bundle, output_file)
@@ -1818,6 +1863,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--speaker_filter", type=str, default=None, help="说话人筛选，如 0010-0015 或 0010,0011")
     parser.add_argument("--max_samples", type=int, default=250, help="每个情绪用于残差提取的最大样本数")
     parser.add_argument("--search_samples", type=int, default=10, help="emotion2vec token 搜索的参考样本数")
+    parser.add_argument(
+        "--min_search_ref_tokens",
+        type=int,
+        default=32,
+        help="token评分阶段最小参考token长度，低于该值的搜索参考会被跳过",
+    )
 
     parser.add_argument("--layers", type=str, default="paper", help="层选择: paper/all/逗号分隔索引")
     parser.add_argument("--top_k", type=int, default=200, help="top-k token 数量")
@@ -1888,7 +1939,7 @@ def main() -> None:
     logger.info(
         f"[参数] emotion={args.emotion} | neutral={args.neutral} | stages={args.stages} | "
         f"top_k={args.top_k} | max_samples={args.max_samples} | search_samples={args.search_samples} | "
-        f"min_ref_tokens={args.min_ref_tokens}"
+        f"min_ref_tokens={args.min_ref_tokens} | min_search_ref_tokens={args.min_search_ref_tokens}"
     )
     set_global_seed(args.seed)
 
@@ -1952,6 +2003,7 @@ def main() -> None:
             sampling_seed=args.seed,
             emotion2vec_model=args.emotion2vec_model,
             emotion2vec_hub=args.emotion2vec_hub,
+            min_search_ref_tokens=args.min_search_ref_tokens,
             step_aggregation_mode=args.step_aggregation_mode,
             post_agg_norm=bool(args.post_agg_norm),
         )
