@@ -1,0 +1,16 @@
+python emosteer_32_33_single.py \
+  --stages extract,build \
+  --dataset_dir /mnt/workspace/hongchengxun/emosteer/act-st2/datasets_merged_intersection \
+  --emotion angry \
+  --neutral neutral \
+  --top_k 40 \
+  --max_samples 500 \
+  --search_samples 10 \
+  --seed 1234 \
+  --layers paper \
+  --min_search_ref_tokens 32 \
+  --output_dir /mnt/workspace/hongchengxun/emosteer/act-st2/outputs \
+  --neutral_residual_pt neutral_for_sad_residual.pt \
+  --emotion_residual_pt sad_residual.pt \
+  --steering_pt sad_steering.pt \
+  --log_file /mnt/workspace/hongchengxun/emosteer/act-st2/outputs/run.log
