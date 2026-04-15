@@ -118,6 +118,9 @@ class ExtractionConfig:
     min_ref_tokens: int
     target_len_mode: str
     debug_verbose: bool
+    min_ref_text_en_words: int
+    min_ref_text_zh_chars: int
+    prune_bad_samples: bool
 
 
 @dataclass
@@ -135,6 +138,8 @@ class BuildConfig:
     step_aggregation_mode: str
     post_agg_norm: bool
     debug_verbose: bool
+    min_ref_text_en_words: int
+    min_ref_text_zh_chars: int
 
 
 def setup_logger(log_file: Path) -> logging.Logger:
@@ -188,6 +193,23 @@ def infer_dataset_tag(dataset_dir: Path) -> str:
 
 def contains_cjk(text: str) -> bool:
     return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def count_cjk_chars(text: str) -> int:
+    return sum(1 for ch in str(text) if "\u4e00" <= ch <= "\u9fff")
+
+
+def count_en_words(text: str) -> int:
+    return len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", str(text)))
+
+
+def is_ref_text_too_short(text: str, min_en_words: int, min_zh_chars: int) -> bool:
+    txt = str(text or "").strip()
+    if not txt:
+        return True
+    if contains_cjk(txt):
+        return count_cjk_chars(txt) < int(min_zh_chars)
+    return count_en_words(txt) < int(min_en_words)
 
 
 def parse_speaker_filter(speaker_filter: Optional[str]) -> Optional[Set[str]]:
@@ -389,6 +411,141 @@ def load_transcription_map(dataset_dir: Path) -> Dict[str, str]:
     return mapping
 
 
+def prune_subtitles_jsonl(
+    dataset_dir: Path,
+    removed_file_ids: Set[str],
+    logger: logging.Logger,
+) -> int:
+    subtitles_jsonl = dataset_dir / "subtitles" / "subtitles.jsonl"
+    if not subtitles_jsonl.exists() or not removed_file_ids:
+        return 0
+
+    kept_lines: List[str] = []
+    removed_rows = 0
+    with subtitles_jsonl.open("r", encoding="utf-8") as f:
+        for line in f:
+            raw = line.rstrip("\n")
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except Exception:
+                kept_lines.append(raw)
+                continue
+
+            uid = str(row.get("uid", "")).strip()
+            audio = str(row.get("audio", row.get("src_audio", ""))).strip()
+            stem = Path(audio).stem if audio else ""
+            if uid in removed_file_ids or stem in removed_file_ids:
+                removed_rows += 1
+                continue
+            kept_lines.append(raw)
+
+    with subtitles_jsonl.open("w", encoding="utf-8") as f:
+        for line in kept_lines:
+            f.write(line + "\n")
+    logger.info(f"[清理] subtitles.jsonl 已更新 | 删除条目={removed_rows}")
+    return removed_rows
+
+
+def prune_manifest_jsonl(
+    dataset_dir: Path,
+    emotion_subdir: str,
+    removed_file_ids: Set[str],
+    logger: logging.Logger,
+) -> int:
+    manifest = dataset_dir / "manifests" / f"{emotion_subdir}.jsonl"
+    if not manifest.exists() or not removed_file_ids:
+        return 0
+
+    kept_lines: List[str] = []
+    removed_rows = 0
+    with manifest.open("r", encoding="utf-8") as f:
+        for line in f:
+            raw = line.rstrip("\n")
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except Exception:
+                kept_lines.append(raw)
+                continue
+            uid = str(row.get("uid", "")).strip()
+            if uid in removed_file_ids:
+                removed_rows += 1
+                continue
+            kept_lines.append(raw)
+
+    with manifest.open("w", encoding="utf-8") as f:
+        for line in kept_lines:
+            f.write(line + "\n")
+    logger.info(f"[清理] manifest({emotion_subdir}) 已更新 | 删除条目={removed_rows}")
+    return removed_rows
+
+
+def prune_bad_samples_from_dataset(
+    dataset_dir: Path,
+    emotion_subdir: str,
+    transcription_map: Dict[str, str],
+    min_ref_tokens: int,
+    min_ref_text_en_words: int,
+    min_ref_text_zh_chars: int,
+    logger: logging.Logger,
+) -> Dict[str, int]:
+    files = collect_audio_files(
+        dataset_dir=dataset_dir,
+        emotion_subdir=emotion_subdir,
+        speaker_filter=None,
+        max_samples=0,
+        sample_seed=None,
+    )
+    if not files:
+        return {"total": 0, "removed": 0, "removed_short_token": 0, "removed_short_text": 0}
+
+    removed_ids: Set[str] = set()
+    removed_short_token = 0
+    removed_short_text = 0
+    removed_total = 0
+
+    for wav in files:
+        file_id = wav.stem
+        ref_tokens = estimate_ref_audio_token_len(str(wav))
+        ref_text = transcription_map.get(file_id, "")
+        short_token = ref_tokens < int(min_ref_tokens)
+        short_text = is_ref_text_too_short(
+            ref_text,
+            min_en_words=int(min_ref_text_en_words),
+            min_zh_chars=int(min_ref_text_zh_chars),
+        )
+        if not (short_token or short_text):
+            continue
+        try:
+            wav.unlink()
+            removed_total += 1
+            removed_ids.add(file_id)
+            if short_token:
+                removed_short_token += 1
+            if short_text:
+                removed_short_text += 1
+        except Exception as e:
+            logger.warning(f"[清理] 删除失败，跳过: {wav} | err={e}")
+
+    if removed_ids:
+        prune_manifest_jsonl(dataset_dir, emotion_subdir, removed_ids, logger)
+        prune_subtitles_jsonl(dataset_dir, removed_ids, logger)
+
+    logger.info(
+        f"[清理] emotion={emotion_subdir} | total={len(files)} | removed={removed_total} | "
+        f"short_token={removed_short_token} | short_text={removed_short_text}"
+    )
+    return {
+        "total": len(files),
+        "removed": removed_total,
+        "removed_short_token": removed_short_token,
+        "removed_short_text": removed_short_text,
+    }
+
+
 def build_text_pools(trans_map: Dict[str, str], seed: int) -> Dict[str, List[str]]:
     pools = {"all": [], "en": [], "zh": []}
     seen: Set[str] = set()
@@ -462,6 +619,13 @@ def sanitize_gen_text_for_single_batch(
     if not txt:
         txt = fallback_text
     return txt
+
+
+def select_search_gen_text_by_lang(lang: str) -> str:
+    # token 搜索阶段固定使用中长句，避免随机抽到单词级文本导致评分退化。
+    if str(lang).lower() == "zh":
+        return "今天我们在公园里散步，阳光很温暖，大家一路聊天，心情都很平静。"
+    return "Today we walked through the park in warm sunshine, talking along the way and feeling calm."
 
 
 def _is_f5_tts_importable() -> bool:
@@ -1320,6 +1484,8 @@ def build_search_references(
     speaker_filter: Optional[Set[str]],
     exclude_file_ids: Optional[Sequence[str]],
     seed: int,
+    min_ref_text_en_words: int,
+    min_ref_text_zh_chars: int,
     debug_verbose: bool,
     logger: logging.Logger,
 ) -> List[SearchReference]:
@@ -1345,13 +1511,20 @@ def build_search_references(
             "可减小 search_samples 或 max_samples，或放宽 speaker_filter。"
         )
 
-    pools = build_text_pools(transcription_map, seed=seed)
     rng = random.Random(seed)
 
     refs_with_lang: List[Dict[str, str]] = []
+    skipped_short_text = 0
     for wav in all_neutral:
         fid = wav.stem
         ref_text = transcription_map.get(fid, "")
+        if is_ref_text_too_short(
+            ref_text,
+            min_en_words=int(min_ref_text_en_words),
+            min_zh_chars=int(min_ref_text_zh_chars),
+        ):
+            skipped_short_text += 1
+            continue
         refs_with_lang.append(
             {
                 "file_id": fid,
@@ -1359,6 +1532,17 @@ def build_search_references(
                 "ref_text": ref_text,
                 "lang": "zh" if contains_cjk(ref_text) else "en",
             }
+        )
+    if skipped_short_text > 0:
+        logger.info(
+            f"[搜索样本] 过滤短文本参考: {skipped_short_text} "
+            f"(min_ref_text_en_words={int(min_ref_text_en_words)}, "
+            f"min_ref_text_zh_chars={int(min_ref_text_zh_chars)})"
+        )
+    if len(refs_with_lang) < num_refs:
+        raise RuntimeError(
+            f"[搜索样本] 可用参考不足（文本过滤后）: {len(refs_with_lang)} < {num_refs}. "
+            "请放宽文本阈值或补充字幕质量。"
         )
 
     rng.shuffle(refs_with_lang)
@@ -1384,8 +1568,11 @@ def build_search_references(
 
     out: List[SearchReference] = []
     for i, item in enumerate(selected[:num_refs]):
-        gen_text = select_generation_text(pools, i, item["ref_text"])
-        gen_text = sanitize_gen_text_for_single_batch(gen_text=gen_text, ref_text=item["ref_text"])
+        _ = i  # 保留索引变量，便于后续扩展
+        gen_text = sanitize_gen_text_for_single_batch(
+            gen_text=select_search_gen_text_by_lang(item["lang"]),
+            ref_text=item["ref_text"],
+        )
         out.append(
             SearchReference(
                 ref_audio=item["ref_audio"],
@@ -1428,17 +1615,17 @@ def evaluate_tokens_with_emotion2vec(
     target_idx = EMOTION_LABEL_TO_INDEX[canonical]
     target_idx_resolved = False
 
-    normalized_vectors: List[torch.Tensor] = []
+    score_vectors: List[torch.Tensor] = []
     for vec in layer_steering_vectors:
         vec = vec.to(runtime.device)
-        normalized_vectors.append(vec / (vec.norm(p=2) + 1e-8))
+        score_vectors.append(vec)
 
-    steps, num_tokens = normalized_vectors[0].shape[:2]
-    for vec in normalized_vectors[1:]:
+    steps, num_tokens = score_vectors[0].shape[:2]
+    for vec in score_vectors[1:]:
         if vec.shape[:2] != (steps, num_tokens):
             raise ValueError("各层 steering shape 不一致。")
     if debug_verbose:
-        for li, vec in zip(selected_layers, normalized_vectors):
+        for li, vec in zip(selected_layers, score_vectors):
             v = vec.float()
             logger.info(
                 f"[Token评分-细节] 层向量统计 | layer={li} | shape={tuple(v.shape)} | "
@@ -1488,7 +1675,7 @@ def evaluate_tokens_with_emotion2vec(
         for token_idx in range(num_tokens):
             single_token_scores: List[float] = []
             model_dtype = next(runtime.model.parameters()).dtype
-            token_vecs = [layer[:, token_idx, :].to(dtype=model_dtype) for layer in normalized_vectors]
+            token_vecs = [layer[:, token_idx, :].to(dtype=model_dtype) for layer in score_vectors]
             if debug_verbose and token_idx < 3:
                 norm_msg = ", ".join(
                     [
@@ -1708,6 +1895,8 @@ def build_steering_bundle(
         speaker_filter=parse_speaker_filter(speaker_filter),
         exclude_file_ids=exclude_ids,
         seed=cfg.sampling_seed if cfg.sampling_seed is not None else 1234,
+        min_ref_text_en_words=cfg.min_ref_text_en_words,
+        min_ref_text_zh_chars=cfg.min_ref_text_zh_chars,
         debug_verbose=cfg.debug_verbose,
         logger=logger,
     )
@@ -1823,6 +2012,8 @@ def build_steering_bundle(
             "step_aggregation_mode": cfg.step_aggregation_mode,
             "search_samples": int(cfg.search_samples),
             "min_search_ref_tokens": int(cfg.min_search_ref_tokens),
+            "min_ref_text_en_words": int(cfg.min_ref_text_en_words),
+            "min_ref_text_zh_chars": int(cfg.min_ref_text_zh_chars),
             "debug_verbose": bool(cfg.debug_verbose),
         },
     }
@@ -1875,9 +2066,37 @@ def run_extract_stage(
         min_ref_tokens=args.min_ref_tokens,
         target_len_mode=args.target_len_mode,
         debug_verbose=bool(args.debug_verbose),
+        min_ref_text_en_words=int(args.min_ref_text_en_words),
+        min_ref_text_zh_chars=int(args.min_ref_text_zh_chars),
+        prune_bad_samples=bool(args.prune_bad_samples),
     )
 
     speaker_filter = parse_speaker_filter(cfg.speaker_filter)
+    trans_map = load_transcription_map(cfg.dataset_dir)
+    if cfg.prune_bad_samples:
+        logger.info(
+            "[清理] 启用数据清理：将删除 ref_tokens 过短或 ref_text 过短的样本（直接改写数据集）"
+        )
+        prune_bad_samples_from_dataset(
+            dataset_dir=cfg.dataset_dir,
+            emotion_subdir=cfg.neutral,
+            transcription_map=trans_map,
+            min_ref_tokens=cfg.min_ref_tokens,
+            min_ref_text_en_words=cfg.min_ref_text_en_words,
+            min_ref_text_zh_chars=cfg.min_ref_text_zh_chars,
+            logger=logger,
+        )
+        prune_bad_samples_from_dataset(
+            dataset_dir=cfg.dataset_dir,
+            emotion_subdir=cfg.emotion,
+            transcription_map=trans_map,
+            min_ref_tokens=cfg.min_ref_tokens,
+            min_ref_text_en_words=cfg.min_ref_text_en_words,
+            min_ref_text_zh_chars=cfg.min_ref_text_zh_chars,
+            logger=logger,
+        )
+        trans_map = load_transcription_map(cfg.dataset_dir)
+
     neutral_files = collect_audio_files(
         dataset_dir=cfg.dataset_dir,
         emotion_subdir=cfg.neutral,
@@ -1909,7 +2128,6 @@ def run_extract_stage(
         f"[提取] 样本统计 | neutral={len(neutral_files)} | emotion={len(emotion_files)} | "
         f"max_samples={cfg.max_samples}"
     )
-    trans_map = load_transcription_map(cfg.dataset_dir)
 
     target_len_n = estimate_target_len_from_captured(
         runtime=runtime,
@@ -2031,6 +2249,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--nfe_step", type=int, default=32)
     parser.add_argument("--min_ref_tokens", type=int, default=32, help="提取阶段最小参考token长度，低于该值样本会被跳过")
+    parser.add_argument("--min_ref_text_en_words", type=int, default=3, help="最小英文参考文本词数（低于阈值视为短文本）")
+    parser.add_argument("--min_ref_text_zh_chars", type=int, default=6, help="最小中文参考文本字数（低于阈值视为短文本）")
+    parser.add_argument(
+        "--prune_bad_samples",
+        action="store_true",
+        help="在extract前直接删除数据集中 ref_tokens/ref_text 过短样本，并同步更新 subtitles/manifests",
+    )
     parser.add_argument("--cfg_strength", type=float, default=2.0)
     parser.add_argument("--sway_sampling_coef", type=float, default=-1.0)
     parser.add_argument("--step_aggregation_mode", type=str, choices=["per_step", "mean_repeat"], default="per_step")
@@ -2098,6 +2323,9 @@ def main() -> None:
         f"[参数] emotion={args.emotion} | neutral={args.neutral} | stages={args.stages} | "
         f"top_k={args.top_k} | max_samples={args.max_samples} | search_samples={args.search_samples} | "
         f"min_ref_tokens={args.min_ref_tokens} | min_search_ref_tokens={args.min_search_ref_tokens} | "
+        f"min_ref_text_en_words={int(args.min_ref_text_en_words)} | "
+        f"min_ref_text_zh_chars={int(args.min_ref_text_zh_chars)} | "
+        f"prune_bad_samples={bool(args.prune_bad_samples)} | "
         f"target_len_mode={args.target_len_mode} | debug_verbose={bool(args.debug_verbose)}"
     )
     set_global_seed(args.seed)
@@ -2166,6 +2394,8 @@ def main() -> None:
             step_aggregation_mode=args.step_aggregation_mode,
             post_agg_norm=bool(args.post_agg_norm),
             debug_verbose=bool(args.debug_verbose),
+            min_ref_text_en_words=int(args.min_ref_text_en_words),
+            min_ref_text_zh_chars=int(args.min_ref_text_zh_chars),
         )
         build_steering_bundle(
             runtime=runtime,

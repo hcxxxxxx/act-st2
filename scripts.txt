@@ -22,3 +22,6 @@ python emosteer_32_33_single.py \
   --target_len_mode captured：保留原先跑一轮 inference 捕获残差来估计
 
   --debug_verbose：详细日志
+  --prune_bad_samples：开启真实删除（有破坏性）
+  --min_ref_text_en_words（默认 3）
+  --min_ref_text_zh_chars（默认 6）
