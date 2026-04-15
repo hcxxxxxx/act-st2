@@ -116,6 +116,7 @@ class ExtractionConfig:
     cfg_strength: float
     sway_sampling_coef: float
     min_ref_tokens: int
+    target_len_mode: str
 
 
 @dataclass
@@ -1027,6 +1028,7 @@ def estimate_target_len_from_captured(
     cfg_strength: float,
     sway_sampling_coef: float,
     min_ref_tokens: int,
+    fast_ref_only: bool,
     transcription_map: Dict[str, str],
     logger: logging.Logger,
 ) -> int:
@@ -1036,12 +1038,16 @@ def estimate_target_len_from_captured(
         raise RuntimeError(f"[提取] 情绪目录 '{emotion_subdir}' 没有 wav 文件。")
 
     text_pools = build_text_pools(transcription_map, seed=text_seed)
-    enable_residual_capture(runtime.model, selected_layers, nfe_step=nfe_step)
+    if not fast_ref_only:
+        enable_residual_capture(runtime.model, selected_layers, nfe_step=nfe_step)
 
     captured_lens: List[int] = []
     skipped_short = 0
     skipped_no_capture = 0
-    logger.info(f"[提取] 估计目标 token 长度 | 情绪={emotion_subdir} | 样本数={len(audio_files)}")
+    mode_name = "ref_audio(无inference)" if fast_ref_only else "captured(含inference)"
+    logger.info(
+        f"[提取] 估计目标 token 长度 | 情绪={emotion_subdir} | 样本数={len(audio_files)} | 模式={mode_name}"
+    )
 
     try:
         for i, wav_path in enumerate(audio_files, start=1):
@@ -1053,10 +1059,11 @@ def estimate_target_len_from_captured(
                 gen_text = ref_text or "This is a sample text for activation extraction"
             gen_text = sanitize_gen_text_for_single_batch(gen_text=gen_text, ref_text=ref_text)
 
-            for layer_idx in selected_layers:
-                block = runtime.model.transformer.transformer_blocks[layer_idx]
-                block.step_residual_tokens = [None] * int(nfe_step)
-                block._capture_call_counter = 0
+            if not fast_ref_only:
+                for layer_idx in selected_layers:
+                    block = runtime.model.transformer.transformer_blocks[layer_idx]
+                    block.step_residual_tokens = [None] * int(nfe_step)
+                    block._capture_call_counter = 0
 
             ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(wav_path), ref_text)
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
@@ -1068,6 +1075,12 @@ def estimate_target_len_from_captured(
                         f"ref_tokens={ref_audio_len} < min_ref_tokens={int(min_ref_tokens)}"
                     )
                 continue
+            if fast_ref_only:
+                captured_lens.append(int(ref_audio_len))
+                if i % 20 == 0 or i == len(audio_files):
+                    logger.info(f"[提取] 目标长度估计进度: {i}/{len(audio_files)}")
+                continue
+
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
 
             call_infer_process_with_retry(
@@ -1104,7 +1117,8 @@ def estimate_target_len_from_captured(
             if i % 20 == 0 or i == len(audio_files):
                 logger.info(f"[提取] 目标长度估计进度: {i}/{len(audio_files)}")
     finally:
-        disable_residual_capture(runtime.model)
+        if not fast_ref_only:
+            disable_residual_capture(runtime.model)
 
     if not captured_lens:
         raise RuntimeError(
@@ -1733,6 +1747,7 @@ def run_extract_stage(
         cfg_strength=args.cfg_strength,
         sway_sampling_coef=args.sway_sampling_coef,
         min_ref_tokens=args.min_ref_tokens,
+        target_len_mode=args.target_len_mode,
     )
 
     speaker_filter = parse_speaker_filter(cfg.speaker_filter)
@@ -1781,6 +1796,7 @@ def run_extract_stage(
         cfg_strength=cfg.cfg_strength,
         sway_sampling_coef=cfg.sway_sampling_coef,
         min_ref_tokens=cfg.min_ref_tokens,
+        fast_ref_only=(cfg.target_len_mode == "ref_audio"),
         transcription_map=trans_map,
         logger=logger,
     )
@@ -1796,11 +1812,12 @@ def run_extract_stage(
         cfg_strength=cfg.cfg_strength,
         sway_sampling_coef=cfg.sway_sampling_coef,
         min_ref_tokens=cfg.min_ref_tokens,
+        fast_ref_only=(cfg.target_len_mode == "ref_audio"),
         transcription_map=trans_map,
         logger=logger,
     )
     target_len = max(1, int(round((target_len_n + target_len_e) / 2)))
-    target_len_source = "captured_first_residual_avg"
+    target_len_source = "ref_audio_token_len_avg" if cfg.target_len_mode == "ref_audio" else "captured_first_residual_avg"
     logger.info(
         f"[提取] 共享目标 token 长度: {target_len} "
         f"(neutral={target_len_n}, emotion={target_len_e})"
@@ -1875,6 +1892,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=None, help="全流程随机种子")
     parser.add_argument("--text_mode", type=str, choices=["random_pool", "ref_text"], default="random_pool")
     parser.add_argument("--text_seed", type=int, default=1234)
+    parser.add_argument(
+        "--target_len_mode",
+        type=str,
+        choices=["ref_audio", "captured"],
+        default="ref_audio",
+        help="目标token长度估计方式：ref_audio(仅按预处理参考音频估计，不跑inference) 或 captured(按捕获残差估计)",
+    )
 
     parser.add_argument("--nfe_step", type=int, default=32)
     parser.add_argument("--min_ref_tokens", type=int, default=32, help="提取阶段最小参考token长度，低于该值样本会被跳过")
@@ -1939,7 +1963,8 @@ def main() -> None:
     logger.info(
         f"[参数] emotion={args.emotion} | neutral={args.neutral} | stages={args.stages} | "
         f"top_k={args.top_k} | max_samples={args.max_samples} | search_samples={args.search_samples} | "
-        f"min_ref_tokens={args.min_ref_tokens} | min_search_ref_tokens={args.min_search_ref_tokens}"
+        f"min_ref_tokens={args.min_ref_tokens} | min_search_ref_tokens={args.min_search_ref_tokens} | "
+        f"target_len_mode={args.target_len_mode}"
     )
     set_global_seed(args.seed)
 

@@ -14,3 +14,7 @@ python emosteer_32_33_single.py \
   --emotion_residual_pt sad_residual.pt \
   --steering_pt sad_steering.pt \
   --log_file /mnt/workspace/hongchengxun/emosteer/act-st2/outputs/run.log
+
+####
+  --target_len_mode ref_audio：只根据 preprocess_ref_audio_text 后的参考音频长度估计 token 长度（默认）
+  --target_len_mode captured：保留原先跑一轮 inference 捕获残差来估计
