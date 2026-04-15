@@ -8,6 +8,7 @@ python emosteer_32_33_single.py \
   --search_samples 10 \
   --seed 1234 \
   --layers paper \
+  --target_len_mode ref_audio \
   --min_search_ref_tokens 32 \
   --output_dir /mnt/workspace/hongchengxun/emosteer/act-st2/outputs \
   --neutral_residual_pt neutral_for_sad_residual.pt \
