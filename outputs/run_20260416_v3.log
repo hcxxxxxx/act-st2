@@ -1,0 +1,245 @@
+2026-04-16 21:31:08 | INFO | ========== EmoSteer 3.2/3.3 单脚本流程开始 ==========
+2026-04-16 21:31:08 | INFO | [参数] emotion=angry | neutral=neutral | stages=extract,build | top_k=10 | max_samples=100 | search_samples=10 | min_ref_tokens=32 | min_search_ref_tokens=32 | min_ref_text_en_words=3 | min_ref_text_zh_chars=6 | prune_bad_samples=True | target_len_mode=ref_audio | debug_verbose=True
+2026-04-16 21:31:08 | INFO | [运行时] 已使用本项目目录内的 f5_tts: /mnt/workspace/hongchengxun/emosteer/act-st2/_vendor/F5-TTS
+2026-04-16 21:31:12 | INFO | [运行时] 加载声码器: vocos
+2026-04-16 21:31:13 | INFO | [运行时] 加载模型: F5TTS_v1_Base
+2026-04-16 21:31:16 | INFO | [Hook] 已 patch DiTBlock 数量: 22
+2026-04-16 21:31:16 | INFO | [参数] 选中层: [1, 6, 11, 16, 21]
+2026-04-16 21:31:16 | INFO | [输出] neutral_residual=neutral_for_angry_residual.pt | emotion_residual=angry_residual.pt | steering=angry_steering.pt
+2026-04-16 21:31:16 | INFO | [清理] 启用数据清理：将删除 ref_tokens 过短或 ref_text 过短的样本（直接改写数据集）
+2026-04-16 21:31:19 | INFO | [清理] emotion=neutral | total=204 | removed=0 | short_token=0 | short_text=0
+2026-04-16 21:31:22 | INFO | [清理] emotion=angry | total=188 | removed=0 | short_token=0 | short_text=0
+2026-04-16 21:31:22 | INFO | [提取] 样本统计 | neutral=100 | emotion=100 | max_samples=100
+2026-04-16 21:31:22 | INFO | [提取] 估计目标 token 长度 | 情绪=neutral | 样本数=100 | 模式=ref_audio(无inference)
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=1 | file=ravdess_d4b0d6ba58aa.wav | ref_tokens=226 | gen_text='Listen I am so very sorry Ligt for inserting myself into your work life and for'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=2 | file=ravdess_1601c814a627.wav | ref_tokens=112 | gen_text='shirt'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=3 | file=ravdess_fb5bd6099d89.wav | ref_tokens=283 | gen_text='I couldn't bear it I thought it was such a weirdo A freak What kind of person we'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=4 | file=ravdess_0ac2f1c3ec11.wav | ref_tokens=446 | gen_text='Ned and Zed loved festivals They loved festivals of all kinds – Halloween wint'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=5 | file=ravdess_eb5e923c0b66.wav | ref_tokens=373 | gen_text='Kids are talking by the door'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=6 | file=ravdess_3e2d9e496497.wav | ref_tokens=119 | gen_text='Why'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=7 | file=emo_emilia_4f34cd0f54dd.wav | ref_tokens=601 | gen_text='I have shocking news that changes your situation entirely Oh no wait What am I t'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=8 | file=ravdess_d6cb0e632e6e.wav | ref_tokens=391 | gen_text='Just awful than that feeling It is'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=9 | file=ravdess_31c675e5ef59.wav | ref_tokens=337 | gen_text='And last cried clever rabbit we are safe The jungle animals came rushing out'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=10 | file=emo_emilia_064a58b568ea.wav | ref_tokens=726 | gen_text='The bank called and said there was fraud on my account I'm like what the fuck th'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=11 | file=ravdess_db393466b040.wav | ref_tokens=172 | gen_text='Shocked And dropped a box on the ground by accident Did she realize she was in l'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=12 | file=emo_emilia_093c0394705a.wav | ref_tokens=519 | gen_text='可没人陪我一起看云彩变形 听风姑娘唱歌了'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=13 | file=emo_emilia_fd1bd3d70854.wav | ref_tokens=632 | gen_text='In the centre of the immortal binding net there was an immense hole its edges st'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=14 | file=emo_emilia_7787df003af5.wav | ref_tokens=201 | gen_text='bar'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=15 | file=emo_emilia_d27c3a2ea0ae.wav | ref_tokens=562 | gen_text='轰隆轰隆一阵响声过后 一瓶黄澄澄的精油出现在我们眼前'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=16 | file=emo_emilia_cba0d5a5f998.wav | ref_tokens=637 | gen_text='因为后者是用在别的星球 而不是地图所描绘的那个世界'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=17 | file=emo_emilia_ab2b83267b9d.wav | ref_tokens=270 | gen_text='should'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=18 | file=emo_emilia_ca2246eceef5.wav | ref_tokens=223 | gen_text='For a web 3 phone is valid so that you can get web 3 technology in the hands of'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=19 | file=emo_emilia_a3959370a066.wav | ref_tokens=389 | gen_text='I hope you enjoyed getting smarter with us today This was a bit of a special epi'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=20 | file=emo_emilia_3e3f8b9d8506.wav | ref_tokens=422 | gen_text='limb'
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 20/100
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 40/100
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=50 | file=emo_emilia_ae4833d132c1.wav | ref_tokens=325 | gen_text='cheek'
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 60/100
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 80/100
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=100 | file=emo_emilia_9d6bfb28ef9e.wav | ref_tokens=486 | gen_text='Wow'
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 100/100
+2026-04-16 21:31:22 | INFO | [提取] 长度估计过滤统计 | skip_short=0 | skip_no_capture=0
+2026-04-16 21:31:22 | INFO | [提取] 目标 token 长度估计完成 | 情绪=neutral | 平均=432 | 样本数=100 | 最小=112 | 最大=743
+2026-04-16 21:31:22 | INFO | [提取] 估计目标 token 长度 | 情绪=angry | 样本数=100 | 模式=ref_audio(无inference)
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=1 | file=ravdess_b1226695c759.wav | ref_tokens=367 | gen_text='Listen I am so very sorry Ligt for inserting myself into your work life and for'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=2 | file=emo_emilia_269ead3e7226.wav | ref_tokens=192 | gen_text='原来爸爸给妈妈开了一个国际级的玩笑 他没有乘班车 而是改'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=3 | file=emo_emilia_8e227ae59a79.wav | ref_tokens=663 | gen_text='I couldn't bear it I thought it was such a weirdo A freak What kind of person we'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=4 | file=emo_emilia_a9825193d3e7.wav | ref_tokens=380 | gen_text='奶泡泡这句话刚刚说完 他和菠菜身上突然就像变魔术一样的'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=5 | file=emo_emilia_270c3844a716.wav | ref_tokens=627 | gen_text='Kids are talking by the door'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=6 | file=emo_emilia_52530ccfe32f.wav | ref_tokens=257 | gen_text='想想看 你居然殴打一个稻草天色城的人 那可怜的稻草人 他'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=7 | file=emo_emilia_fe5e7403d68a.wav | ref_tokens=406 | gen_text='救命啊救命啊 你的发给你的救命啊'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=8 | file=emo_emilia_bb8c0f3be3d5.wav | ref_tokens=707 | gen_text='Just awful than that feeling It is'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=9 | file=emo_emilia_d5e31e34875d.wav | ref_tokens=439 | gen_text='于是呃我就对他说了 别吵了 绝对是你放的屁'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=10 | file=emo_emilia_61dec6d071d5.wav | ref_tokens=627 | gen_text='The bank called and said there was fraud on my account I'm like what the fuck th'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=11 | file=emo_emilia_38107519d138.wav | ref_tokens=351 | gen_text='Shocked And dropped a box on the ground by accident Did she realize she was in l'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=12 | file=emo_emilia_f072af860917.wav | ref_tokens=717 | gen_text='late'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=13 | file=emo_emilia_baf08fdb6d8d.wav | ref_tokens=705 | gen_text='In the centre of the immortal binding net there was an immense hole its edges st'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=14 | file=emo_emilia_d9980c679527.wav | ref_tokens=574 | gen_text='bar'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=15 | file=emo_emilia_24e9c42d29c5.wav | ref_tokens=570 | gen_text='轰隆轰隆一阵响声过后 一瓶黄澄澄的精油出现在我们眼前'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=16 | file=emo_emilia_94497d1a19c2.wav | ref_tokens=714 | gen_text='No I don't want to sit I just I want to know how she is Now tell me'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=17 | file=emo_emilia_07691d6e3439.wav | ref_tokens=611 | gen_text='肯定是因为甘泉的水是甜的呀 所以做出来的豆腐就特别好吃'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=18 | file=emo_emilia_3f3ced17df2b.wav | ref_tokens=352 | gen_text='For a web 3 phone is valid so that you can get web 3 technology in the hands of'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=19 | file=emo_emilia_ae3c19395376.wav | ref_tokens=719 | gen_text='我保证会把你再关上个一千年'
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=20 | file=emo_emilia_d067a2af9d3e.wav | ref_tokens=622 | gen_text='limb'
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 20/100
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 40/100
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=50 | file=emo_emilia_13797ec3073b.wav | ref_tokens=662 | gen_text='又是热脸贴 冷屁股 哎呀 不行 再接再厉'
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 60/100
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 80/100
+2026-04-16 21:31:22 | INFO | [提取-细节] 长度估计样本 | idx=100 | file=emo_emilia_fb74af785655.wav | ref_tokens=715 | gen_text='Wow'
+2026-04-16 21:31:22 | INFO | [提取] 目标长度估计进度: 100/100
+2026-04-16 21:31:22 | INFO | [提取] 长度估计过滤统计 | skip_short=0 | skip_no_capture=0
+2026-04-16 21:31:22 | INFO | [提取] 目标 token 长度估计完成 | 情绪=angry | 平均=504 | 样本数=100 | 最小=189 | 最大=733
+2026-04-16 21:31:22 | INFO | [提取] 共享目标 token 长度: 468 (neutral=432, emotion=504)
+2026-04-16 21:31:22 | INFO | [提取] 开始提取第一残差均值 | emotion=neutral | 样本=100 | 目标长度=468(ref_audio_token_len_avg)
+2026-04-16 21:31:22 | INFO | [提取-细节] 均值提取样本 | idx=1 | file=ravdess_d4b0d6ba58aa.wav | ref_tokens=226 | gen_text='Listen I am so very sorry Ligt for inserting myself into your work life and for'
+2026-04-16 21:31:24 | INFO | [提取-细节] 累计计数 | idx=1 | file=ravdess_d4b0d6ba58aa.wav | L1:1, L6:1, L11:1, L16:1, L21:1
+2026-04-16 21:31:24 | INFO | [提取-细节] 均值提取样本 | idx=2 | file=ravdess_1601c814a627.wav | ref_tokens=112 | gen_text='shirt'
+2026-04-16 21:31:25 | INFO | [提取-细节] 累计计数 | idx=2 | file=ravdess_1601c814a627.wav | L1:2, L6:2, L11:2, L16:2, L21:2
+2026-04-16 21:31:25 | INFO | [提取-细节] 均值提取样本 | idx=3 | file=ravdess_fb5bd6099d89.wav | ref_tokens=283 | gen_text='I couldn't bear it I thought it was such a weirdo A freak What kind of person we'
+2026-04-16 21:31:26 | INFO | [提取-细节] 累计计数 | idx=3 | file=ravdess_fb5bd6099d89.wav | L1:3, L6:3, L11:3, L16:3, L21:3
+2026-04-16 21:31:26 | INFO | [提取-细节] 均值提取样本 | idx=4 | file=ravdess_0ac2f1c3ec11.wav | ref_tokens=446 | gen_text='Ned and Zed loved festivals They loved festivals of all kinds – Halloween wint'
+2026-04-16 21:31:27 | INFO | [提取-细节] 累计计数 | idx=4 | file=ravdess_0ac2f1c3ec11.wav | L1:4, L6:4, L11:4, L16:4, L21:4
+2026-04-16 21:31:27 | INFO | [提取-细节] 均值提取样本 | idx=5 | file=ravdess_eb5e923c0b66.wav | ref_tokens=373 | gen_text='Kids are talking by the door'
+2026-04-16 21:31:28 | INFO | [提取-细节] 累计计数 | idx=5 | file=ravdess_eb5e923c0b66.wav | L1:5, L6:5, L11:5, L16:5, L21:5
+2026-04-16 21:31:28 | INFO | [提取-细节] 均值提取样本 | idx=6 | file=ravdess_3e2d9e496497.wav | ref_tokens=119 | gen_text='Why'
+2026-04-16 21:31:29 | INFO | [提取-细节] 累计计数 | idx=6 | file=ravdess_3e2d9e496497.wav | L1:6, L6:6, L11:6, L16:6, L21:6
+2026-04-16 21:31:29 | INFO | [提取-细节] 均值提取样本 | idx=7 | file=emo_emilia_4f34cd0f54dd.wav | ref_tokens=601 | gen_text='I have shocking news that changes your situation entirely Oh no wait What am I t'
+2026-04-16 21:31:31 | INFO | [提取-细节] 累计计数 | idx=7 | file=emo_emilia_4f34cd0f54dd.wav | L1:7, L6:7, L11:7, L16:7, L21:7
+2026-04-16 21:31:31 | INFO | [提取-细节] 均值提取样本 | idx=8 | file=ravdess_d6cb0e632e6e.wav | ref_tokens=391 | gen_text='Just awful than that feeling It is'
+2026-04-16 21:31:32 | INFO | [提取-细节] 累计计数 | idx=8 | file=ravdess_d6cb0e632e6e.wav | L1:8, L6:8, L11:8, L16:8, L21:8
+2026-04-16 21:31:32 | INFO | [提取-细节] 均值提取样本 | idx=9 | file=ravdess_31c675e5ef59.wav | ref_tokens=337 | gen_text='And last cried clever rabbit we are safe The jungle animals came rushing out'
+2026-04-16 21:31:33 | INFO | [提取-细节] 累计计数 | idx=9 | file=ravdess_31c675e5ef59.wav | L1:9, L6:9, L11:9, L16:9, L21:9
+2026-04-16 21:31:33 | INFO | [提取-细节] 均值提取样本 | idx=10 | file=emo_emilia_064a58b568ea.wav | ref_tokens=726 | gen_text='The bank called and said there was fraud on my account I'm like what the fuck th'
+2026-04-16 21:31:35 | INFO | [提取-细节] 累计计数 | idx=10 | file=emo_emilia_064a58b568ea.wav | L1:10, L6:10, L11:10, L16:10, L21:10
+2026-04-16 21:31:35 | INFO | [提取] 进度 neutral: 10/100
+2026-04-16 21:31:35 | INFO | [提取-细节] 均值提取样本 | idx=11 | file=ravdess_db393466b040.wav | ref_tokens=172 | gen_text='Shocked And dropped a box on the ground by accident Did she realize she was in l'
+2026-04-16 21:31:36 | INFO | [提取-细节] 累计计数 | idx=11 | file=ravdess_db393466b040.wav | L1:11, L6:11, L11:11, L16:11, L21:11
+2026-04-16 21:31:36 | INFO | [提取-细节] 均值提取样本 | idx=12 | file=emo_emilia_093c0394705a.wav | ref_tokens=519 | gen_text='可没人陪我一起看云彩变形 听风姑娘唱歌了'
+2026-04-16 21:31:37 | INFO | [提取-细节] 累计计数 | idx=12 | file=emo_emilia_093c0394705a.wav | L1:12, L6:12, L11:12, L16:12, L21:12
+2026-04-16 21:31:37 | INFO | [提取-细节] 均值提取样本 | idx=13 | file=emo_emilia_fd1bd3d70854.wav | ref_tokens=632 | gen_text='In the centre of the immortal binding net there was an immense hole its edges st'
+2026-04-16 21:31:39 | INFO | [提取-细节] 累计计数 | idx=13 | file=emo_emilia_fd1bd3d70854.wav | L1:13, L6:13, L11:13, L16:13, L21:13
+2026-04-16 21:31:39 | INFO | [提取-细节] 均值提取样本 | idx=14 | file=emo_emilia_7787df003af5.wav | ref_tokens=201 | gen_text='bar'
+2026-04-16 21:31:40 | INFO | [提取-细节] 累计计数 | idx=14 | file=emo_emilia_7787df003af5.wav | L1:14, L6:14, L11:14, L16:14, L21:14
+2026-04-16 21:31:40 | INFO | [提取-细节] 均值提取样本 | idx=15 | file=emo_emilia_d27c3a2ea0ae.wav | ref_tokens=562 | gen_text='轰隆轰隆一阵响声过后 一瓶黄澄澄的精油出现在我们眼前'
+2026-04-16 21:31:42 | INFO | [提取-细节] 累计计数 | idx=15 | file=emo_emilia_d27c3a2ea0ae.wav | L1:15, L6:15, L11:15, L16:15, L21:15
+2026-04-16 21:31:42 | INFO | [提取-细节] 均值提取样本 | idx=16 | file=emo_emilia_cba0d5a5f998.wav | ref_tokens=637 | gen_text='因为后者是用在别的星球 而不是地图所描绘的那个世界'
+2026-04-16 21:31:44 | INFO | [提取-细节] 累计计数 | idx=16 | file=emo_emilia_cba0d5a5f998.wav | L1:16, L6:16, L11:16, L16:16, L21:16
+2026-04-16 21:31:44 | INFO | [提取-细节] 均值提取样本 | idx=17 | file=emo_emilia_ab2b83267b9d.wav | ref_tokens=270 | gen_text='should'
+2026-04-16 21:31:45 | INFO | [提取-细节] 累计计数 | idx=17 | file=emo_emilia_ab2b83267b9d.wav | L1:17, L6:17, L11:17, L16:17, L21:17
+2026-04-16 21:31:45 | INFO | [提取-细节] 均值提取样本 | idx=18 | file=emo_emilia_ca2246eceef5.wav | ref_tokens=223 | gen_text='For a web 3 phone is valid so that you can get web 3 technology in the hands of'
+2026-04-16 21:31:46 | INFO | [提取-细节] 累计计数 | idx=18 | file=emo_emilia_ca2246eceef5.wav | L1:18, L6:18, L11:18, L16:18, L21:18
+2026-04-16 21:31:46 | INFO | [提取-细节] 均值提取样本 | idx=19 | file=emo_emilia_a3959370a066.wav | ref_tokens=389 | gen_text='I hope you enjoyed getting smarter with us today This was a bit of a special epi'
+2026-04-16 21:31:47 | INFO | [提取-细节] 累计计数 | idx=19 | file=emo_emilia_a3959370a066.wav | L1:19, L6:19, L11:19, L16:19, L21:19
+2026-04-16 21:31:47 | INFO | [提取-细节] 均值提取样本 | idx=20 | file=emo_emilia_3e3f8b9d8506.wav | ref_tokens=422 | gen_text='limb'
+2026-04-16 21:31:49 | INFO | [提取-细节] 累计计数 | idx=20 | file=emo_emilia_3e3f8b9d8506.wav | L1:20, L6:20, L11:20, L16:20, L21:20
+2026-04-16 21:31:49 | INFO | [提取] 进度 neutral: 20/100
+2026-04-16 21:32:03 | INFO | [提取] 进度 neutral: 30/100
+2026-04-16 21:32:19 | INFO | [提取] 进度 neutral: 40/100
+2026-04-16 21:32:32 | INFO | [提取-细节] 均值提取样本 | idx=50 | file=emo_emilia_ae4833d132c1.wav | ref_tokens=325 | gen_text='cheek'
+2026-04-16 21:32:33 | INFO | [提取-细节] 累计计数 | idx=50 | file=emo_emilia_ae4833d132c1.wav | L1:50, L6:50, L11:50, L16:50, L21:50
+2026-04-16 21:32:33 | INFO | [提取] 进度 neutral: 50/100
+2026-04-16 21:32:47 | INFO | [提取] 进度 neutral: 60/100
+2026-04-16 21:33:03 | INFO | [提取] 进度 neutral: 70/100
+2026-04-16 21:33:18 | INFO | [提取] 进度 neutral: 80/100
+2026-04-16 21:33:32 | INFO | [提取] 进度 neutral: 90/100
+2026-04-16 21:33:45 | INFO | [提取-细节] 均值提取样本 | idx=100 | file=emo_emilia_9d6bfb28ef9e.wav | ref_tokens=486 | gen_text='Wow'
+2026-04-16 21:33:47 | INFO | [提取-细节] 累计计数 | idx=100 | file=emo_emilia_9d6bfb28ef9e.wav | L1:100, L6:100, L11:100, L16:100, L21:100
+2026-04-16 21:33:47 | INFO | [提取] 进度 neutral: 100/100
+2026-04-16 21:33:47 | INFO | [提取] 完成 emotion=neutral | layer_counts={1: 100, 6: 100, 11: 100, 16: 100, 21: 100}
+2026-04-16 21:33:47 | INFO | [提取] 开始提取第一残差均值 | emotion=angry | 样本=100 | 目标长度=468(ref_audio_token_len_avg)
+2026-04-16 21:33:47 | INFO | [提取-细节] 均值提取样本 | idx=1 | file=ravdess_b1226695c759.wav | ref_tokens=367 | gen_text='Listen I am so very sorry Ligt for inserting myself into your work life and for'
+2026-04-16 21:33:48 | INFO | [提取-细节] 累计计数 | idx=1 | file=ravdess_b1226695c759.wav | L1:1, L6:1, L11:1, L16:1, L21:1
+2026-04-16 21:33:48 | INFO | [提取-细节] 均值提取样本 | idx=2 | file=emo_emilia_269ead3e7226.wav | ref_tokens=192 | gen_text='原来爸爸给妈妈开了一个国际级的玩笑 他没有乘班车 而是改'
+2026-04-16 21:33:49 | INFO | [提取-细节] 累计计数 | idx=2 | file=emo_emilia_269ead3e7226.wav | L1:2, L6:2, L11:2, L16:2, L21:2
+2026-04-16 21:33:49 | INFO | [提取-细节] 均值提取样本 | idx=3 | file=emo_emilia_8e227ae59a79.wav | ref_tokens=663 | gen_text='I couldn't bear it I thought it was such a weirdo A freak What kind of person we'
+2026-04-16 21:33:51 | INFO | [提取-细节] 累计计数 | idx=3 | file=emo_emilia_8e227ae59a79.wav | L1:3, L6:3, L11:3, L16:3, L21:3
+2026-04-16 21:33:51 | INFO | [提取-细节] 均值提取样本 | idx=4 | file=emo_emilia_a9825193d3e7.wav | ref_tokens=380 | gen_text='奶泡泡这句话刚刚说完 他和菠菜身上突然就像变魔术一样的'
+2026-04-16 21:33:52 | INFO | [提取-细节] 累计计数 | idx=4 | file=emo_emilia_a9825193d3e7.wav | L1:4, L6:4, L11:4, L16:4, L21:4
+2026-04-16 21:33:52 | INFO | [提取-细节] 均值提取样本 | idx=5 | file=emo_emilia_270c3844a716.wav | ref_tokens=627 | gen_text='Kids are talking by the door'
+2026-04-16 21:33:54 | INFO | [提取-细节] 累计计数 | idx=5 | file=emo_emilia_270c3844a716.wav | L1:5, L6:5, L11:5, L16:5, L21:5
+2026-04-16 21:33:54 | INFO | [提取-细节] 均值提取样本 | idx=6 | file=emo_emilia_52530ccfe32f.wav | ref_tokens=257 | gen_text='想想看 你居然殴打一个稻草天色城的人 那可怜的稻草人 他'
+2026-04-16 21:33:55 | INFO | [提取-细节] 累计计数 | idx=6 | file=emo_emilia_52530ccfe32f.wav | L1:6, L6:6, L11:6, L16:6, L21:6
+2026-04-16 21:33:55 | INFO | [提取-细节] 均值提取样本 | idx=7 | file=emo_emilia_fe5e7403d68a.wav | ref_tokens=406 | gen_text='救命啊救命啊 你的发给你的救命啊'
+2026-04-16 21:33:56 | INFO | [提取-细节] 累计计数 | idx=7 | file=emo_emilia_fe5e7403d68a.wav | L1:7, L6:7, L11:7, L16:7, L21:7
+2026-04-16 21:33:56 | INFO | [提取-细节] 均值提取样本 | idx=8 | file=emo_emilia_bb8c0f3be3d5.wav | ref_tokens=707 | gen_text='Just awful than that feeling It is'
+2026-04-16 21:33:58 | INFO | [提取-细节] 累计计数 | idx=8 | file=emo_emilia_bb8c0f3be3d5.wav | L1:8, L6:8, L11:8, L16:8, L21:8
+2026-04-16 21:33:58 | INFO | [提取-细节] 均值提取样本 | idx=9 | file=emo_emilia_d5e31e34875d.wav | ref_tokens=439 | gen_text='于是呃我就对他说了 别吵了 绝对是你放的屁'
+2026-04-16 21:33:59 | INFO | [提取-细节] 累计计数 | idx=9 | file=emo_emilia_d5e31e34875d.wav | L1:9, L6:9, L11:9, L16:9, L21:9
+2026-04-16 21:33:59 | INFO | [提取-细节] 均值提取样本 | idx=10 | file=emo_emilia_61dec6d071d5.wav | ref_tokens=627 | gen_text='The bank called and said there was fraud on my account I'm like what the fuck th'
+2026-04-16 21:34:02 | INFO | [提取-细节] 累计计数 | idx=10 | file=emo_emilia_61dec6d071d5.wav | L1:10, L6:10, L11:10, L16:10, L21:10
+2026-04-16 21:34:02 | INFO | [提取] 进度 angry: 10/100
+2026-04-16 21:34:02 | INFO | [提取-细节] 均值提取样本 | idx=11 | file=emo_emilia_38107519d138.wav | ref_tokens=351 | gen_text='Shocked And dropped a box on the ground by accident Did she realize she was in l'
+2026-04-16 21:34:03 | INFO | [提取-细节] 累计计数 | idx=11 | file=emo_emilia_38107519d138.wav | L1:11, L6:11, L11:11, L16:11, L21:11
+2026-04-16 21:34:03 | INFO | [提取-细节] 均值提取样本 | idx=12 | file=emo_emilia_f072af860917.wav | ref_tokens=717 | gen_text='late'
+2026-04-16 21:34:05 | INFO | [提取-细节] 累计计数 | idx=12 | file=emo_emilia_f072af860917.wav | L1:12, L6:12, L11:12, L16:12, L21:12
+2026-04-16 21:34:05 | INFO | [提取-细节] 均值提取样本 | idx=13 | file=emo_emilia_baf08fdb6d8d.wav | ref_tokens=705 | gen_text='In the centre of the immortal binding net there was an immense hole its edges st'
+2026-04-16 21:34:07 | INFO | [提取-细节] 累计计数 | idx=13 | file=emo_emilia_baf08fdb6d8d.wav | L1:13, L6:13, L11:13, L16:13, L21:13
+2026-04-16 21:34:07 | INFO | [提取-细节] 均值提取样本 | idx=14 | file=emo_emilia_d9980c679527.wav | ref_tokens=574 | gen_text='bar'
+2026-04-16 21:34:08 | INFO | [提取-细节] 累计计数 | idx=14 | file=emo_emilia_d9980c679527.wav | L1:14, L6:14, L11:14, L16:14, L21:14
+2026-04-16 21:34:08 | INFO | [提取-细节] 均值提取样本 | idx=15 | file=emo_emilia_24e9c42d29c5.wav | ref_tokens=570 | gen_text='轰隆轰隆一阵响声过后 一瓶黄澄澄的精油出现在我们眼前'
+2026-04-16 21:34:10 | INFO | [提取-细节] 累计计数 | idx=15 | file=emo_emilia_24e9c42d29c5.wav | L1:15, L6:15, L11:15, L16:15, L21:15
+2026-04-16 21:34:10 | INFO | [提取-细节] 均值提取样本 | idx=16 | file=emo_emilia_94497d1a19c2.wav | ref_tokens=714 | gen_text='No I don't want to sit I just I want to know how she is Now tell me'
+2026-04-16 21:34:12 | INFO | [提取-细节] 累计计数 | idx=16 | file=emo_emilia_94497d1a19c2.wav | L1:16, L6:16, L11:16, L16:16, L21:16
+2026-04-16 21:34:12 | INFO | [提取-细节] 均值提取样本 | idx=17 | file=emo_emilia_07691d6e3439.wav | ref_tokens=611 | gen_text='肯定是因为甘泉的水是甜的呀 所以做出来的豆腐就特别好吃'
+2026-04-16 21:34:13 | INFO | [提取-细节] 累计计数 | idx=17 | file=emo_emilia_07691d6e3439.wav | L1:17, L6:17, L11:17, L16:17, L21:17
+2026-04-16 21:34:13 | INFO | [提取-细节] 均值提取样本 | idx=18 | file=emo_emilia_3f3ced17df2b.wav | ref_tokens=352 | gen_text='For a web 3 phone is valid so that you can get web 3 technology in the hands of'
+2026-04-16 21:34:15 | INFO | [提取-细节] 累计计数 | idx=18 | file=emo_emilia_3f3ced17df2b.wav | L1:18, L6:18, L11:18, L16:18, L21:18
+2026-04-16 21:34:15 | INFO | [提取-细节] 均值提取样本 | idx=19 | file=emo_emilia_ae3c19395376.wav | ref_tokens=719 | gen_text='我保证会把你再关上个一千年'
+2026-04-16 21:34:16 | INFO | [提取-细节] 累计计数 | idx=19 | file=emo_emilia_ae3c19395376.wav | L1:19, L6:19, L11:19, L16:19, L21:19
+2026-04-16 21:34:16 | INFO | [提取-细节] 均值提取样本 | idx=20 | file=emo_emilia_d067a2af9d3e.wav | ref_tokens=622 | gen_text='limb'
+2026-04-16 21:34:18 | INFO | [提取-细节] 累计计数 | idx=20 | file=emo_emilia_d067a2af9d3e.wav | L1:20, L6:20, L11:20, L16:20, L21:20
+2026-04-16 21:34:18 | INFO | [提取] 进度 angry: 20/100
+2026-04-16 21:34:33 | INFO | [提取] 进度 angry: 30/100
+2026-04-16 21:34:47 | INFO | [提取] 进度 angry: 40/100
+2026-04-16 21:35:01 | INFO | [提取-细节] 均值提取样本 | idx=50 | file=emo_emilia_13797ec3073b.wav | ref_tokens=662 | gen_text='又是热脸贴 冷屁股 哎呀 不行 再接再厉'
+2026-04-16 21:35:03 | INFO | [提取-细节] 累计计数 | idx=50 | file=emo_emilia_13797ec3073b.wav | L1:50, L6:50, L11:50, L16:50, L21:50
+2026-04-16 21:35:03 | INFO | [提取] 进度 angry: 50/100
+2026-04-16 21:35:17 | INFO | [提取] 进度 angry: 60/100
+2026-04-16 21:35:34 | INFO | [提取] 进度 angry: 70/100
+2026-04-16 21:35:50 | INFO | [提取] 进度 angry: 80/100
+2026-04-16 21:36:04 | INFO | [提取] 进度 angry: 90/100
+2026-04-16 21:36:18 | INFO | [提取-细节] 均值提取样本 | idx=100 | file=emo_emilia_fb74af785655.wav | ref_tokens=715 | gen_text='Wow'
+2026-04-16 21:36:19 | INFO | [提取-细节] 累计计数 | idx=100 | file=emo_emilia_fb74af785655.wav | L1:100, L6:100, L11:100, L16:100, L21:100
+2026-04-16 21:36:19 | INFO | [提取] 进度 angry: 100/100
+2026-04-16 21:36:19 | INFO | [提取] 完成 emotion=angry | layer_counts={1: 100, 6: 100, 11: 100, 16: 100, 21: 100}
+2026-04-16 21:36:21 | INFO | [提取] 已保存 neutral 残差: /mnt/workspace/hongchengxun/emosteer/act-st2/outputs/neutral_for_angry_residual.pt
+2026-04-16 21:36:21 | INFO | [提取] 已保存 emotion 残差: /mnt/workspace/hongchengxun/emosteer/act-st2/outputs/angry_residual.pt
+2026-04-16 21:36:21 | INFO | [构建-细节] 输入残差文件 | neutral=/mnt/workspace/hongchengxun/emosteer/act-st2/outputs/neutral_for_angry_residual.pt | emotion=/mnt/workspace/hongchengxun/emosteer/act-st2/outputs/angry_residual.pt
+2026-04-16 21:36:21 | INFO | [构建-细节] neutral元信息 | target_len=468 | num_samples=100 | layer_counts=[100, 100, 100, 100, 100]
+2026-04-16 21:36:21 | INFO | [构建-细节] emotion元信息 | target_len=468 | num_samples=100 | layer_counts=[100, 100, 100, 100, 100]
+2026-04-16 21:36:21 | INFO | [构建] 开始构建 steering 向量
+2026-04-16 21:36:21 | INFO | [构建] 层 1 | neutral_norm=12577.9150 | emotion_norm=12566.4346 | diff_norm=2086.3782
+2026-04-16 21:36:21 | INFO | [构建] 层 6 | neutral_norm=14157.5352 | emotion_norm=14281.1875 | diff_norm=2057.3525
+2026-04-16 21:36:21 | INFO | [构建] 层 11 | neutral_norm=18003.5254 | emotion_norm=18027.2598 | diff_norm=2890.2102
+2026-04-16 21:36:21 | INFO | [构建] 层 16 | neutral_norm=22751.3223 | emotion_norm=22878.5527 | diff_norm=3658.5210
+2026-04-16 21:36:21 | INFO | [构建] 层 21 | neutral_norm=30414.5488 | emotion_norm=30586.8672 | diff_norm=5801.6782
+2026-04-16 21:36:21 | INFO | [构建-细节] 可用层数量=5 | layers=[1, 6, 11, 16, 21]
+2026-04-16 21:36:21 | INFO | [搜索样本] neutral池: 原始=204 | 排除=100 | 剩余=104
+2026-04-16 21:36:21 | INFO | [搜索样本] 已构建 emotion2vec 搜索样本: 10
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#01 | file_id=emo_emilia_3bab4d65d4c1 | lang=en | ref_text='They can use this information to help support their decision as to whether to go'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#02 | file_id=emo_emilia_c488a635cacf | lang=en | ref_text='Knock out some cases that I have to read for Wednesday classes and brief my case'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#03 | file_id=emo_emilia_7c1e19c430f6 | lang=en | ref_text='The building was named for Leon Levine, the CEO of Family Dollar Stores'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#04 | file_id=emo_emilia_9b0734413c80 | lang=en | ref_text='So when you build a reactor and you put in deuterium in the form of water that h'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#05 | file_id=emo_emilia_4d7574b35cc3 | lang=en | ref_text='And he's here today to outline some perspectives on a theme which I think will r'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#06 | file_id=emo_emilia_be104b0f2a26 | lang=zh | ref_text='不仅中国不承认,世界上绝大多数国家也都不支持。就连一向与中国唱反调的印度,都公开表示支持中方立场。'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#07 | file_id=emo_emilia_40793777db40 | lang=zh | ref_text='而果园主人由于违反了农药使用规定,主观上有过错,所以就认为果园主人喷洒农药的行为与偷果人中毒死亡的结果之间具有法律上的因果关系。'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#08 | file_id=emo_emilia_b452c95b8f97 | lang=zh | ref_text='关于地球上生命的起源呢,目前最主流的说法呢是说生命呢是从飞生物物质,例如简单的有机化合物,通过长期且复杂的自然演变,一步步形成的。'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#09 | file_id=emo_emilia_74153c9b880f | lang=zh | ref_text='同时,这种处理方式也可以让观众在剧情结束后有更多的想像和探讨空间,增加观众的参与感和互动性。你觉得呢?'
+2026-04-16 21:36:21 | INFO | [搜索样本-细节] ref#10 | file_id=emo_emilia_b306c1af2a4e | lang=zh | ref_text='为开头的这几次勘查,牛顿制定了几条地面工作条例,每一组必须有一名有经验的成员。'
+2026-04-16 21:36:22 | INFO | [Emotion2Vec] 加载模型: iic/emotion2vec_plus_large (hub=ms)
+2026-04-16 21:36:31 | INFO | [Token评分-细节] 层向量统计 | layer=1 | shape=(32, 468, 1024) | min=-22.350426 | max=29.838196 | mean=-0.009784 | std=0.532986
+2026-04-16 21:36:31 | INFO | [Token评分-细节] 层向量统计 | layer=6 | shape=(32, 468, 1024) | min=-10.542859 | max=10.995968 | mean=-0.006841 | std=0.525606
+2026-04-16 21:36:31 | INFO | [Token评分-细节] 层向量统计 | layer=11 | shape=(32, 468, 1024) | min=-72.577515 | max=282.014374 | mean=0.001085 | std=0.738541
+2026-04-16 21:36:31 | INFO | [Token评分-细节] 层向量统计 | layer=16 | shape=(32, 468, 1024) | min=-156.422607 | max=373.716248 | mean=0.006375 | std=0.934812
+2026-04-16 21:36:31 | INFO | [Token评分-细节] 层向量统计 | layer=21 | shape=(32, 468, 1024) | min=-203.983765 | max=425.441223 | mean=-0.029036 | std=1.482097
+2026-04-16 21:36:31 | INFO | [Token评分] emotion2vec 全 token 搜索开始 | tokens=468 | refs=10 | skip_short_refs=0 | min_search_ref_tokens=32
+2026-04-16 21:36:31 | INFO | [Token评分-细节] token=0000 各层向量范数 | L1:58.398842, L6:67.722275, L11:121.664253, L16:220.946732, L21:332.712189
+2026-04-16 21:36:31 | INFO | [Token评分-细节] token=0000 ref=00 | file_id=emo_emilia_3bab4d65d4c1 | ref_tokens=611 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:36:32 | INFO | [Token评分-诊断] emotion2vec 标签数=9 | labels=['生气/angry', '厌恶/disgusted', '恐惧/fearful', '开心/happy', '中立/neutral', '其他/other', '难过/sad', '吃惊/surprised', '<unk>']
+2026-04-16 21:36:32 | INFO | [Token评分] 目标情绪 'angry' 映射到标签 '生气/angry' (index=0)
+2026-04-16 21:36:32 | INFO | [Token评分-细节] token=0000 ref=00 | target_score=0.000047 | top1=中立/neutral:0.993339 | sum_scores=1.000000
+2026-04-16 21:36:32 | INFO | [Token评分-细节] token=0000 ref=01 | file_id=emo_emilia_c488a635cacf | ref_tokens=532 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:36:34 | INFO | [Token评分-细节] token=0000 ref=01 | target_score=0.000456 | top1=<unk>:0.709422 | sum_scores=1.000000
+2026-04-16 21:36:34 | INFO | [Token评分-细节] token=0000 ref=02 | file_id=emo_emilia_7c1e19c430f6 | ref_tokens=304 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:36:35 | INFO | [Token评分-细节] token=0000 ref=02 | target_score=0.000000 | top1=开心/happy:1.000000 | sum_scores=1.000000
+2026-04-16 21:36:45 | INFO | [Token评分-细节] token=0001 各层向量范数 | L1:64.625481, L6:74.370331, L11:76.623421, L16:104.643448, L21:192.424149
+2026-04-16 21:36:45 | INFO | [Token评分-细节] token=0001 ref=00 | file_id=emo_emilia_3bab4d65d4c1 | ref_tokens=611 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:36:46 | INFO | [Token评分-细节] token=0001 ref=00 | target_score=0.000050 | top1=中立/neutral:0.992540 | sum_scores=1.000000
+2026-04-16 21:36:46 | INFO | [Token评分-细节] token=0001 ref=01 | file_id=emo_emilia_c488a635cacf | ref_tokens=532 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:36:48 | INFO | [Token评分-细节] token=0001 ref=01 | target_score=0.000502 | top1=<unk>:0.636456 | sum_scores=1.000000
+2026-04-16 21:36:48 | INFO | [Token评分-细节] token=0001 ref=02 | file_id=emo_emilia_7c1e19c430f6 | ref_tokens=304 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:36:49 | INFO | [Token评分-细节] token=0001 ref=02 | target_score=0.000000 | top1=开心/happy:1.000000 | sum_scores=1.000000
+2026-04-16 21:36:59 | INFO | [Token评分-细节] token=0002 各层向量范数 | L1:68.889809, L6:84.129257, L11:91.136993, L16:121.603310, L21:212.039062
+2026-04-16 21:36:59 | INFO | [Token评分-细节] token=0002 ref=00 | file_id=emo_emilia_3bab4d65d4c1 | ref_tokens=611 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:37:00 | INFO | [Token评分-细节] token=0002 ref=00 | target_score=0.000030 | top1=中立/neutral:0.995657 | sum_scores=1.000000
+2026-04-16 21:37:00 | INFO | [Token评分-细节] token=0002 ref=01 | file_id=emo_emilia_c488a635cacf | ref_tokens=532 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:37:02 | INFO | [Token评分-细节] token=0002 ref=01 | target_score=0.000512 | top1=<unk>:0.690610 | sum_scores=1.000000
+2026-04-16 21:37:02 | INFO | [Token评分-细节] token=0002 ref=02 | file_id=emo_emilia_7c1e19c430f6 | ref_tokens=304 | gen_text='Today we walked through the park in warm sunshine talking along the way and feel'
+2026-04-16 21:37:03 | INFO | [Token评分-细节] token=0002 ref=02 | target_score=0.000000 | top1=开心/happy:1.000000 | sum_scores=1.000000
+2026-04-16 21:38:52 | INFO | [Token评分] 进度 10/468 | 当前token均分=0.000296
+2026-04-16 21:41:14 | INFO | [Token评分] 进度 20/468 | 当前token均分=0.000080
+2026-04-16 21:43:35 | INFO | [Token评分] 进度 30/468 | 当前token均分=0.000105
+2026-04-16 21:45:57 | INFO | [Token评分] 进度 40/468 | 当前token均分=0.000095
+2026-04-16 21:48:18 | INFO | [Token评分] 进度 50/468 | 当前token均分=0.000143
+2026-04-16 21:50:39 | INFO | [Token评分] 进度 60/468 | 当前token均分=0.000100
