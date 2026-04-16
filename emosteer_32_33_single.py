@@ -509,8 +509,8 @@ def prune_bad_samples_from_dataset(
 
     for wav in files:
         file_id = wav.stem
-        ref_tokens = estimate_ref_audio_token_len(str(wav))
         ref_text = transcription_map.get(file_id, "")
+        ref_tokens = estimate_ref_audio_token_len_compatible(str(wav), ref_text=ref_text)
         short_token = ref_tokens < int(min_ref_tokens)
         short_text = is_ref_text_too_short(
             ref_text,
@@ -792,7 +792,12 @@ def parse_layers(layer_arg: str, total_layers: int, model_name: str) -> List[int
 
 
 def normalize_emotion_label(label: str) -> str:
-    return EMOTION_ALIAS.get(label.lower(), "happy")
+    key = str(label or "").strip().lower()
+    if key in EMOTION_ALIAS:
+        return EMOTION_ALIAS[key]
+    raise ValueError(
+        f"不支持的情绪标签: '{label}'。支持: {sorted(set(EMOTION_ALIAS.keys()))}"
+    )
 
 
 def normalize_label_text(text: str) -> str:
@@ -1010,6 +1015,20 @@ def estimate_ref_audio_token_len(wav_path: str, hop_length: int = 256) -> int:
         return max(1, int(info.num_frames) // int(hop_length))
     except Exception:
         return 1
+
+
+def estimate_ref_audio_token_len_compatible(wav_path: str, ref_text: str = "", hop_length: int = 256) -> int:
+    """
+    与主流程一致的 token 长度估计：优先走 preprocess_ref_audio_text 后再估计。
+    若预处理失败，回退到原始音频估计。
+    """
+    try:
+        from f5_tts.infer.utils_infer import preprocess_ref_audio_text
+
+        ref_audio_path, _ = preprocess_ref_audio_text(str(wav_path), str(ref_text or ""))
+        return estimate_ref_audio_token_len(str(ref_audio_path), hop_length=hop_length)
+    except Exception:
+        return estimate_ref_audio_token_len(str(wav_path), hop_length=hop_length)
 
 
 def fill_missing_steps(
