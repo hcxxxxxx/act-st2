@@ -546,12 +546,23 @@ def prune_bad_samples_from_dataset(
     }
 
 
-def build_text_pools(trans_map: Dict[str, str], seed: int) -> Dict[str, List[str]]:
+def build_text_pools(
+    trans_map: Dict[str, str],
+    seed: int,
+    min_ref_text_en_words: int,
+    min_ref_text_zh_chars: int,
+) -> Dict[str, List[str]]:
     pools = {"all": [], "en": [], "zh": []}
     seen: Set[str] = set()
     for _, text in sorted(trans_map.items()):
         text = text.strip()
         if not text or text in seen:
+            continue
+        if is_ref_text_too_short(
+            text,
+            min_en_words=int(min_ref_text_en_words),
+            min_zh_chars=int(min_ref_text_zh_chars),
+        ):
             continue
         seen.add(text)
         pools["all"].append(text)
@@ -624,8 +635,8 @@ def sanitize_gen_text_for_single_batch(
 def select_search_gen_text_by_lang(lang: str) -> str:
     # token 搜索阶段固定使用中长句，避免随机抽到单词级文本导致评分退化。
     if str(lang).lower() == "zh":
-        return "今天我们在公园里散步，阳光很温暖，大家一路聊天，心情都很平静。"
-    return "Today we walked through the park in warm sunshine, talking along the way and feeling calm."
+        return "今天下午三点，研究小组在会议室汇报了实验结果，并记录了下一步安排。"
+    return "At three o'clock this afternoon, the research team presented the experiment results and recorded the next steps in the meeting room."
 
 
 def _is_f5_tts_importable() -> bool:
@@ -1215,6 +1226,8 @@ def estimate_target_len_from_captured(
     cfg_strength: float,
     sway_sampling_coef: float,
     min_ref_tokens: int,
+    min_ref_text_en_words: int,
+    min_ref_text_zh_chars: int,
     fast_ref_only: bool,
     debug_verbose: bool,
     transcription_map: Dict[str, str],
@@ -1225,7 +1238,12 @@ def estimate_target_len_from_captured(
     if not audio_files:
         raise RuntimeError(f"[提取] 情绪目录 '{emotion_subdir}' 没有 wav 文件。")
 
-    text_pools = build_text_pools(transcription_map, seed=text_seed)
+    text_pools = build_text_pools(
+        transcription_map,
+        seed=text_seed,
+        min_ref_text_en_words=int(min_ref_text_en_words),
+        min_ref_text_zh_chars=int(min_ref_text_zh_chars),
+    )
     if not fast_ref_only:
         enable_residual_capture(runtime.model, selected_layers, nfe_step=nfe_step)
 
@@ -1356,7 +1374,12 @@ def extract_mean_activation(
     if not audio_files:
         raise RuntimeError(f"[提取] '{emotion_subdir}' 无可用样本。")
 
-    text_pools = build_text_pools(transcription_map, seed=cfg.text_seed)
+    text_pools = build_text_pools(
+        transcription_map,
+        seed=cfg.text_seed,
+        min_ref_text_en_words=int(cfg.min_ref_text_en_words),
+        min_ref_text_zh_chars=int(cfg.min_ref_text_zh_chars),
+    )
     enable_residual_capture(runtime.model, selected_layers, nfe_step=cfg.nfe_step)
 
     layer_sums: List[Optional[torch.Tensor]] = [None for _ in selected_layers]
@@ -2160,6 +2183,8 @@ def run_extract_stage(
         cfg_strength=cfg.cfg_strength,
         sway_sampling_coef=cfg.sway_sampling_coef,
         min_ref_tokens=cfg.min_ref_tokens,
+        min_ref_text_en_words=cfg.min_ref_text_en_words,
+        min_ref_text_zh_chars=cfg.min_ref_text_zh_chars,
         fast_ref_only=(cfg.target_len_mode == "ref_audio"),
         debug_verbose=cfg.debug_verbose,
         transcription_map=trans_map,
@@ -2177,6 +2202,8 @@ def run_extract_stage(
         cfg_strength=cfg.cfg_strength,
         sway_sampling_coef=cfg.sway_sampling_coef,
         min_ref_tokens=cfg.min_ref_tokens,
+        min_ref_text_en_words=cfg.min_ref_text_en_words,
+        min_ref_text_zh_chars=cfg.min_ref_text_zh_chars,
         fast_ref_only=(cfg.target_len_mode == "ref_audio"),
         debug_verbose=cfg.debug_verbose,
         transcription_map=trans_map,
