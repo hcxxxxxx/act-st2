@@ -850,6 +850,8 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
         # 参照论文附录：在 DiTBlock 内部对 block 输入施加 step steering，
         # 并在第一残差 x_res1 处捕获激活。
         def patched_forward(self, x, t, mask=None, rope=None):
+            # 由上层 DiT.forward 标记：当前是否无条件分支（drop_audio_cond=True）。
+            is_uncond_branch = bool(getattr(self, "_emosteer_drop_audio_cond", False))
             ref_audio_len = getattr(self, "current_ref_audio_len", None)
             if ref_audio_len is None:
                 ref_audio_len = x.shape[1]
@@ -861,19 +863,23 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
             cond_batch = max(1, min(int(cond_batch), int(x.shape[0])))
 
             step_steering = getattr(self, "step_steering", None)
+            # 关键修复：仅在 cond 分支注入，避免与 uncond 分支在 CFG 中相互抵消。
+            if is_uncond_branch:
+                step_steering = None
             if step_steering is not None and ref_audio_len > 0:
                 if not torch.is_tensor(step_steering):
                     raise RuntimeError("step_steering 不是张量，无法执行 token 注入。")
                 if step_steering.ndim == 1:
                     act = step_steering
                 elif step_steering.ndim == 2:
-                    call_counter = int(getattr(self, "_step_call_counter", 0))
+                    # 关键修复：step 计数仅按 cond 分支递增。
+                    call_counter = int(getattr(self, "_step_call_counter_cond", 0))
                     raw_step_idx = getattr(self, "current_step_idx", None)
                     if raw_step_idx is None:
                         raw_step_idx = call_counter
                     step_idx = max(0, min(int(raw_step_idx), int(step_steering.shape[0]) - 1))
                     act = step_steering[step_idx]
-                    self._step_call_counter = call_counter + 1
+                    self._step_call_counter_cond = call_counter + 1
                 else:
                     raise RuntimeError(f"step_steering 维度不支持: {tuple(step_steering.shape)}")
 
@@ -901,16 +907,17 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
 
             x_res1 = x + gate_msa.unsqueeze(1) * attn_output
 
-            if bool(getattr(self, "save_residual", False)):
+            # 关键修复：只捕获 cond 分支第一残差，避免 uncond 污染均值残差。
+            if bool(getattr(self, "save_residual", False)) and (not is_uncond_branch):
                 self.first_residual = x_res1.detach()
                 if ref_audio_len > 0:
                     captured = x_res1[0, :ref_audio_len, :].detach().cpu()
                     total_steps = getattr(self, "current_total_steps", None)
-                    capture_counter = int(getattr(self, "_capture_call_counter", 0))
+                    capture_counter = int(getattr(self, "_capture_call_counter_cond", 0))
                     cap_idx = getattr(self, "current_step_idx", None)
                     if cap_idx is None:
                         cap_idx = capture_counter
-                    self._capture_call_counter = capture_counter + 1
+                    self._capture_call_counter_cond = capture_counter + 1
 
                     if total_steps is not None and int(total_steps) > 0:
                         total_steps = int(total_steps)
@@ -941,7 +948,45 @@ def patch_ditblock_forward_if_needed(model: torch.nn.Module, logger: logging.Log
         block.step_residual_tokens = None
         block._step_call_counter = 0
         block._capture_call_counter = 0
+        block._step_call_counter_cond = 0
+        block._capture_call_counter_cond = 0
+        block._emosteer_drop_audio_cond = False
         patched += 1
+
+    # 关键修复：patch DiT.forward，把 drop_audio_cond 状态传给各个 block。
+    transformer = getattr(model, "transformer", None)
+    if transformer is not None and not bool(getattr(transformer, "_emosteer_drop_hooked", False)):
+        orig_forward = transformer.forward
+        try:
+            sig = inspect.signature(orig_forward)
+        except Exception:
+            sig = None
+
+        def patched_transformer_forward(self, *args, **kwargs):
+            drop_audio_cond = False
+            if sig is not None:
+                try:
+                    bound = sig.bind_partial(*args, **kwargs)
+                    if "drop_audio_cond" in bound.arguments:
+                        drop_audio_cond = bool(bound.arguments["drop_audio_cond"])
+                    else:
+                        drop_audio_cond = bool(kwargs.get("drop_audio_cond", False))
+                except Exception:
+                    drop_audio_cond = bool(kwargs.get("drop_audio_cond", False))
+            else:
+                drop_audio_cond = bool(kwargs.get("drop_audio_cond", False))
+
+            for blk in self.transformer_blocks:
+                blk._emosteer_drop_audio_cond = drop_audio_cond
+            try:
+                return orig_forward(*args, **kwargs)
+            finally:
+                for blk in self.transformer_blocks:
+                    blk._emosteer_drop_audio_cond = False
+
+        transformer.forward = MethodType(patched_transformer_forward, transformer)
+        transformer._emosteer_drop_hooked = True
+        logger.info("[Hook] 已 patch DiT.forward：按 drop_audio_cond 区分 cond/uncond 分支。")
 
     if patched == 0:
         logger.warning("[Hook] 未找到可 patch 的 DiTBlock，若模型本身不支持 residual capture，后续会失败。")
@@ -962,6 +1007,9 @@ def reset_all_blocks(model: torch.nn.Module) -> None:
         block.step_residual_tokens = None
         block._step_call_counter = 0
         block._capture_call_counter = 0
+        block._step_call_counter_cond = 0
+        block._capture_call_counter_cond = 0
+        block._emosteer_drop_audio_cond = False
 
 
 def enable_residual_capture(model: torch.nn.Module, selected_layers: Sequence[int], nfe_step: int) -> None:
@@ -972,6 +1020,7 @@ def enable_residual_capture(model: torch.nn.Module, selected_layers: Sequence[in
         block.step_residual_tokens = [None] * int(nfe_step)
         block.current_total_steps = int(nfe_step)
         block._capture_call_counter = 0
+        block._capture_call_counter_cond = 0
 
 
 def disable_residual_capture(model: torch.nn.Module) -> None:
@@ -985,6 +1034,7 @@ def clear_token_steering(model: torch.nn.Module, selected_layers: Sequence[int])
         block.step_steering = None
         block.alpha = 0.0
         block._step_call_counter = 0
+        block._step_call_counter_cond = 0
 
 
 def set_token_steering(
@@ -1005,6 +1055,7 @@ def set_token_steering(
         block.current_total_steps = int(nfe_step)
         block.current_ref_audio_len = int(ref_audio_len)
         block._step_call_counter = 0
+        block._step_call_counter_cond = 0
 
 
 def set_runtime_context_for_all_blocks(
