@@ -142,6 +142,20 @@ class BuildConfig:
     min_ref_text_zh_chars: int
 
 
+@dataclass
+class ConvertConfig:
+    steering_bundle: Optional[Path]
+    ref_audio: Optional[Path]
+    ref_text: str
+    gen_text: str
+    alpha: float
+    output_wav: Optional[Path]
+    nfe_step_override: int
+    cfg_strength: float
+    sway_sampling_coef: float
+    sampling_seed: Optional[int]
+
+
 def setup_logger(log_file: Path) -> logging.Logger:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("emosteer3233")
@@ -1913,6 +1927,64 @@ def load_residual_pack(path: Path) -> Dict[str, Any]:
     return pack
 
 
+def load_steering_bundle(path: Path) -> Dict[str, Any]:
+    bundle = torch.load(path, map_location="cpu", weights_only=True)
+    if not isinstance(bundle, dict):
+        raise ValueError(f"steering bundle 格式非法(非dict): {path}")
+    if "layers" not in bundle or "step_steering" not in bundle:
+        raise ValueError(f"steering bundle 缺少关键字段 layers/step_steering: {path}")
+
+    layers = bundle["layers"]
+    steps = bundle["step_steering"]
+    if not isinstance(layers, (list, tuple)) or not isinstance(steps, (list, tuple)):
+        raise ValueError(f"steering bundle 字段类型非法: layers={type(layers)}, step_steering={type(steps)}")
+    if len(layers) == 0 or len(steps) == 0 or len(layers) != len(steps):
+        raise ValueError(
+            f"steering bundle 层信息非法: len(layers)={len(layers)}, len(step_steering)={len(steps)}"
+        )
+
+    for i, x in enumerate(steps):
+        if not torch.is_tensor(x):
+            raise ValueError(f"step_steering[{i}] 不是张量: {type(x)}")
+        if x.ndim not in (1, 2):
+            raise ValueError(f"step_steering[{i}] 维度非法: {tuple(x.shape)}")
+        if x.numel() == 0:
+            raise ValueError(f"step_steering[{i}] 为空张量")
+    return bundle
+
+
+def resample_step_steering_to_nfe(step_steer: torch.Tensor, target_steps: int) -> torch.Tensor:
+    target_steps = max(1, int(target_steps))
+    if step_steer.ndim == 1:
+        return step_steer.unsqueeze(0).repeat(target_steps, 1)
+    if step_steer.shape[0] == target_steps:
+        return step_steer
+    x = step_steer.float().transpose(0, 1).unsqueeze(0)  # [1, D, S]
+    x = F.interpolate(x, size=target_steps, mode="nearest")
+    x = x.squeeze(0).transpose(0, 1).contiguous()
+    return x.to(dtype=step_steer.dtype)
+
+
+def to_mono_tensor_for_save(wav: Any) -> torch.Tensor:
+    if isinstance(wav, torch.Tensor):
+        t = wav.detach().to(torch.float32).cpu()
+    else:
+        try:
+            t = torch.from_numpy(wav).to(torch.float32)
+        except Exception:
+            t = torch.as_tensor(wav, dtype=torch.float32)
+    if t.ndim == 1:
+        t = t.unsqueeze(0)
+    elif t.ndim >= 2:
+        if t.shape[0] > 2 and t.shape[1] <= 2:
+            t = t.transpose(0, 1)
+        if t.ndim > 2:
+            t = t.reshape(t.shape[0], -1)
+        if t.shape[0] > 1:
+            t = t[:1, :]
+    return t.contiguous()
+
+
 def build_steering_bundle(
     runtime: RuntimeHandles,
     neutral_residual_file: Path,
@@ -2116,6 +2188,130 @@ def build_steering_bundle(
     logger.info(f"[构建] 生效层: {active_layers}")
     logger.info(f"[构建] top-k 数量: {len(top_indices)}")
     return bundle
+
+
+def run_convert_stage(
+    runtime: RuntimeHandles,
+    args: argparse.Namespace,
+    default_steering_out: Path,
+    logger: logging.Logger,
+) -> None:
+    cfg = ConvertConfig(
+        steering_bundle=args.steering_bundle,
+        ref_audio=args.ref_audio,
+        ref_text=str(args.ref_text or ""),
+        gen_text=str(args.gen_text or ""),
+        alpha=float(args.alpha),
+        output_wav=args.output_wav,
+        nfe_step_override=int(args.convert_nfe_step),
+        cfg_strength=float(args.cfg_strength),
+        sway_sampling_coef=float(args.sway_sampling_coef),
+        sampling_seed=args.seed,
+    )
+
+    steering_bundle_path = (cfg.steering_bundle or default_steering_out).resolve()
+    if not steering_bundle_path.exists():
+        raise FileNotFoundError(
+            f"[Convert] 未找到 steering bundle: {steering_bundle_path}。"
+            "请先运行 build 阶段，或用 --steering_bundle 显式指定。"
+        )
+    if cfg.ref_audio is None:
+        raise ValueError("[Convert] 缺少 --ref_audio。")
+    ref_audio = cfg.ref_audio.resolve()
+    if not ref_audio.exists():
+        raise FileNotFoundError(f"[Convert] ref_audio 不存在: {ref_audio}")
+    if not cfg.gen_text.strip():
+        raise ValueError("[Convert] 缺少 --gen_text（不能为空）。")
+
+    output_wav = cfg.output_wav
+    if output_wav is None:
+        emo = safe_name(args.emotion or "emotion")
+        output_wav = args.output_dir / f"convert_{emo}.wav"
+    output_wav = output_wav.resolve()
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+
+    bundle = load_steering_bundle(steering_bundle_path)
+    layers = [int(x) for x in bundle["layers"]]
+    step_steering_raw: Sequence[torch.Tensor] = bundle["step_steering"]
+
+    default_nfe = int(bundle.get("expected_nfe_step", bundle.get("num_steps", args.nfe_step)))
+    if default_nfe <= 0:
+        default_nfe = int(args.nfe_step)
+    nfe_step = int(cfg.nfe_step_override) if int(cfg.nfe_step_override) > 0 else int(default_nfe)
+
+    step_steering: List[torch.Tensor] = []
+    model_dtype = next(runtime.model.parameters()).dtype
+    step_shape_logs: List[str] = []
+    for li, sv in zip(layers, step_steering_raw):
+        sv2 = resample_step_steering_to_nfe(sv, nfe_step)
+        step_steering.append(sv2.to(dtype=model_dtype))
+        step_shape_logs.append(f"L{li}:{tuple(sv.shape)}->{tuple(sv2.shape)}")
+
+    logger.info(
+        f"[Convert] 加载 steering bundle: {steering_bundle_path} | layers={layers} | "
+        f"alpha={cfg.alpha:.4f} | nfe_step={nfe_step}"
+    )
+    logger.info(f"[Convert] step_steering 形状对齐: {', '.join(step_shape_logs)}")
+
+    from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
+
+    ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(ref_audio), cfg.ref_text)
+    ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
+    logger.info(
+        f"[Convert] 参考音频预处理完成 | ref_audio={ref_audio_processed} | "
+        f"ref_tokens={ref_audio_len} | ref_text_len={len(str(ref_text_processed))}"
+    )
+    if ref_audio_len <= 0:
+        raise RuntimeError("[Convert] 参考音频 token 长度估计失败。")
+
+    set_runtime_context_for_all_blocks(
+        runtime.model,
+        nfe_step=nfe_step,
+        ref_audio_len=ref_audio_len,
+        cfg_batch_size=1,
+    )
+    set_token_steering(
+        runtime.model,
+        selected_layers=layers,
+        per_layer_token_step_vecs=step_steering,
+        alpha=cfg.alpha,
+        nfe_step=nfe_step,
+        ref_audio_len=ref_audio_len,
+    )
+
+    try:
+        infer_output = call_infer_process_compat(
+            infer_process_fn=infer_process,
+            call_kwargs={
+                "ref_audio": ref_audio_processed,
+                "ref_text": ref_text_processed,
+                "gen_text": cfg.gen_text,
+                "model_obj": runtime.model,
+                "vocoder": runtime.vocoder,
+                "mel_spec_type": runtime.vocoder_name,
+                "show_info": (lambda *_args, **_kwargs: None),
+                "progress": None,
+                "nfe_step": nfe_step,
+                "cfg_strength": cfg.cfg_strength,
+                "sway_sampling_coef": cfg.sway_sampling_coef,
+                "device": runtime.device,
+            },
+            seed=cfg.sampling_seed,
+            logger=logger,
+        )
+    finally:
+        clear_token_steering(runtime.model, layers)
+
+    wav_out, sample_rate, _ = normalize_infer_output(infer_output)
+    if wav_out is None:
+        raise RuntimeError("[Convert] infer_process 未返回音频。")
+    wav_tensor = to_mono_tensor_for_save(wav_out)
+    torchaudio.save(str(output_wav), wav_tensor, int(sample_rate))
+
+    logger.info(
+        f"[Convert] 合成完成 | sample_rate={int(sample_rate)} | num_frames={int(wav_tensor.shape[-1])}"
+    )
+    logger.info(f"[Convert] 已保存输出音频: {output_wav}")
 
 
 def parse_stage_list(stages: str) -> List[str]:
@@ -2362,6 +2558,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="开启详细诊断日志（用于排查提取/构建/打分阶段问题）",
     )
+    parser.add_argument("--steering_bundle", type=Path, default=None, help="convert阶段使用的 steering bundle(.pt)；默认使用输出目录中的 --steering_pt")
+    parser.add_argument("--ref_audio", type=Path, default=None, help="convert阶段参考音频路径")
+    parser.add_argument("--ref_text", type=str, default="", help="convert阶段参考音频对应文本")
+    parser.add_argument("--gen_text", type=str, default="", help="convert阶段要合成的目标文本")
+    parser.add_argument("--alpha", type=float, default=2.0, help="convert阶段 steering 注入强度")
+    parser.add_argument("--convert_nfe_step", type=int, default=0, help="convert阶段ODE步数；<=0 时自动使用 bundle 里的 expected_nfe_step")
+    parser.add_argument("--output_wav", type=Path, default=None, help="convert阶段输出音频路径")
 
     parser.add_argument("--model_name", type=str, default="F5TTS_v1_Base")
     parser.add_argument("--vocoder_name", type=str, default="vocos")
@@ -2507,7 +2710,12 @@ def main() -> None:
         )
 
     if "convert" in stages:
-        logger.info("[Convert] 当前脚本暂未实现 convert 阶段，已预留 stage 参数。")
+        run_convert_stage(
+            runtime=runtime,
+            args=args,
+            default_steering_out=steering_out,
+            logger=logger,
+        )
 
     logger.info("========== 全流程结束 ==========")
     logger.info(f"[日志] 已写入: {args.log_file}")
