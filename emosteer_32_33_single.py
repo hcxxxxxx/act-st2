@@ -646,6 +646,38 @@ def sanitize_gen_text_for_single_batch(
     return txt
 
 
+def short_text_for_log(text: str, max_len: int = 120) -> str:
+    txt = str(text or "").replace("\n", " ").strip()
+    if len(txt) <= int(max_len):
+        return txt
+    return txt[: int(max_len)] + "..."
+
+
+def log_infer_call_detail(
+    logger: logging.Logger,
+    stage: str,
+    emotion: str,
+    file_id: str,
+    ref_audio: str,
+    ref_tokens: int,
+    ref_text: str,
+    gen_text: str,
+    nfe_step: int,
+    cfg_strength: float,
+    sway_sampling_coef: float,
+    seed: Optional[int],
+    extra: str = "",
+) -> None:
+    suffix = f" | {extra}" if str(extra).strip() else ""
+    logger.info(
+        f"[推理调用-细节] stage={stage} | emotion={emotion} | file_id={file_id} | "
+        f"ref_audio={ref_audio} | ref_tokens={int(ref_tokens)} | "
+        f"ref_text='{short_text_for_log(ref_text)}' | gen_text='{short_text_for_log(gen_text)}' | "
+        f"nfe_step={int(nfe_step)} | cfg_strength={float(cfg_strength):.4f} | "
+        f"sway_sampling_coef={float(sway_sampling_coef):.4f} | seed={seed}{suffix}"
+    )
+
+
 def select_search_gen_text_by_lang(lang: str) -> str:
     # token 搜索阶段固定使用中长句，避免随机抽到单词级文本导致评分退化。
     if str(lang).lower() == "zh":
@@ -1338,7 +1370,7 @@ def estimate_target_len_from_captured(
 
             ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(wav_path), ref_text)
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
-            if debug_verbose and (i <= 20 or i % 50 == 0):
+            if debug_verbose:
                 logger.info(
                     f"[提取-细节] 长度估计样本 | idx={i} | file={wav_path.name} | "
                     f"ref_tokens={ref_audio_len} | gen_text='{gen_text[:80]}'"
@@ -1358,6 +1390,22 @@ def estimate_target_len_from_captured(
                 continue
 
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
+            if debug_verbose:
+                infer_seed = (sampling_seed + i - 1) if sampling_seed is not None else None
+                log_infer_call_detail(
+                    logger=logger,
+                    stage="extract.estimate_target_len",
+                    emotion=emotion_subdir,
+                    file_id=file_id,
+                    ref_audio=str(ref_audio_processed),
+                    ref_tokens=int(ref_audio_len),
+                    ref_text=ref_text_processed,
+                    gen_text=gen_text,
+                    nfe_step=nfe_step,
+                    cfg_strength=cfg_strength,
+                    sway_sampling_coef=sway_sampling_coef,
+                    seed=infer_seed,
+                )
 
             call_infer_process_with_retry(
                 infer_process_fn=infer_process,
@@ -1388,7 +1436,7 @@ def estimate_target_len_from_captured(
 
             if sample_len is not None:
                 captured_lens.append(sample_len)
-                if debug_verbose and (i <= 20 or i % 50 == 0):
+                if debug_verbose:
                     logger.info(
                         f"[提取-细节] 捕获长度 | idx={i} | file={wav_path.name} | captured_tokens={sample_len}"
                     )
@@ -1473,7 +1521,7 @@ def extract_mean_activation(
 
             ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(str(wav_path), ref_text)
             ref_audio_len = estimate_ref_audio_token_len(str(ref_audio_processed))
-            if cfg.debug_verbose and (i <= 20 or i % 50 == 0):
+            if cfg.debug_verbose:
                 logger.info(
                     f"[提取-细节] 均值提取样本 | idx={i} | file={wav_path.name} | "
                     f"ref_tokens={ref_audio_len} | gen_text='{gen_text[:80]}'"
@@ -1487,6 +1535,23 @@ def extract_mean_activation(
                     )
                 continue
             set_runtime_context_for_all_blocks(runtime.model, nfe_step=cfg.nfe_step, ref_audio_len=ref_audio_len, cfg_batch_size=1)
+            if cfg.debug_verbose:
+                infer_seed = (cfg.sampling_seed + i - 1) if cfg.sampling_seed is not None else None
+                log_infer_call_detail(
+                    logger=logger,
+                    stage="extract.mean_activation",
+                    emotion=emotion_subdir,
+                    file_id=file_id,
+                    ref_audio=str(ref_audio_processed),
+                    ref_tokens=int(ref_audio_len),
+                    ref_text=ref_text_processed,
+                    gen_text=gen_text,
+                    nfe_step=cfg.nfe_step,
+                    cfg_strength=cfg.cfg_strength,
+                    sway_sampling_coef=cfg.sway_sampling_coef,
+                    seed=infer_seed,
+                    extra=f"idx={i}/{len(audio_files)}",
+                )
 
             call_infer_process_with_retry(
                 infer_process_fn=infer_process,
@@ -1510,7 +1575,7 @@ def extract_mean_activation(
                 block = runtime.model.transformer.transformer_blocks[layer_idx]
                 tokens = fill_missing_steps(block.step_residual_tokens or [], cfg.nfe_step)
                 if tokens is None:
-                    if cfg.debug_verbose and i <= 20:
+                    if cfg.debug_verbose:
                         logger.warning(
                             f"[提取-细节] 层无token捕获 | idx={i} | file={wav_path.name} | layer={layer_idx}"
                         )
@@ -1527,7 +1592,7 @@ def extract_mean_activation(
                     layer_sums[local_idx] += activation
                 layer_counts[local_idx] += 1
 
-            if cfg.debug_verbose and (i <= 20 or i % 50 == 0):
+            if cfg.debug_verbose:
                 per_layer_states = ", ".join(
                     [f"L{li}:{layer_counts[idx]}" for idx, li in enumerate(selected_layers)]
                 )
@@ -1783,7 +1848,7 @@ def evaluate_tokens_with_emotion2vec(
             single_token_scores: List[float] = []
             model_dtype = next(runtime.model.parameters()).dtype
             token_vecs = [layer[:, token_idx, :].to(dtype=model_dtype) for layer in score_vectors]
-            if debug_verbose and token_idx < 3:
+            if debug_verbose:
                 norm_msg = ", ".join(
                     [
                         f"L{li}:{float(tv.float().norm(p=2).item()):.6f}"
@@ -1793,7 +1858,7 @@ def evaluate_tokens_with_emotion2vec(
                 logger.info(f"[Token评分-细节] token={token_idx:04d} 各层向量范数 | {norm_msg}")
 
             for ref_idx, ref in enumerate(processed_refs):
-                if debug_verbose and token_idx < 3 and ref_idx < 3:
+                if debug_verbose:
                     logger.info(
                         f"[Token评分-细节] token={token_idx:04d} ref={ref_idx:02d} | "
                         f"file_id={ref['file_id']} | ref_tokens={ref['ref_audio_len']} | "
@@ -1815,6 +1880,22 @@ def evaluate_tokens_with_emotion2vec(
                 )
                 try:
                     with contextlib.redirect_stdout(io.StringIO()):
+                        if debug_verbose:
+                            log_infer_call_detail(
+                                logger=logger,
+                                stage="build.token_scoring",
+                                emotion=canonical,
+                                file_id=str(ref["file_id"]),
+                                ref_audio=str(ref["ref_audio"]),
+                                ref_tokens=int(ref["ref_audio_len"]),
+                                ref_text=str(ref["ref_text"]),
+                                gen_text=str(ref["gen_text"]),
+                                nfe_step=nfe_step,
+                                cfg_strength=cfg_strength,
+                                sway_sampling_coef=sway_sampling_coef,
+                                seed=sampling_seed,
+                                extra=f"token={token_idx:04d},ref_idx={ref_idx:02d}",
+                            )
                         infer_output = call_infer_process_with_retry(
                             infer_process_fn=infer_process,
                             call_kwargs={
@@ -1840,7 +1921,7 @@ def evaluate_tokens_with_emotion2vec(
 
                 if wav_np is None:
                     single_token_scores.append(0.0)
-                    if debug_verbose and token_idx < 3 and ref_idx < 3:
+                    if debug_verbose:
                         logger.warning(
                             f"[Token评分-细节] token={token_idx:04d} ref={ref_idx:02d} infer_output为空，记0分"
                         )
@@ -1871,7 +1952,7 @@ def evaluate_tokens_with_emotion2vec(
                         target_idx_resolved = True
                     scores = ser_result[0].get("scores", [])
                     single_token_scores.append(float(scores[target_idx]) if len(scores) > target_idx else 0.0)
-                    if debug_verbose and token_idx < 3 and ref_idx < 3:
+                    if debug_verbose:
                         top_idx = int(max(range(len(scores)), key=lambda i: scores[i])) if scores else -1
                         top_label = labels[top_idx] if labels and 0 <= top_idx < len(labels) else "N/A"
                         top_score = float(scores[top_idx]) if scores and 0 <= top_idx < len(scores) else 0.0
@@ -1884,12 +1965,17 @@ def evaluate_tokens_with_emotion2vec(
                         )
                 else:
                     single_token_scores.append(0.0)
-                    if debug_verbose and token_idx < 3 and ref_idx < 3:
+                    if debug_verbose:
                         logger.warning(
                             f"[Token评分-细节] token={token_idx:04d} ref={ref_idx:02d} emotion2vec无结果，记0分"
                         )
 
             token_scores.append(sum(single_token_scores) / max(1, len(single_token_scores)))
+            if debug_verbose:
+                logger.info(
+                    f"[Token评分-逐token] token={token_idx:04d} | refs={len(single_token_scores)} | "
+                    f"mean_score={token_scores[-1]:.8f} | per_ref_scores={[float(x) for x in single_token_scores]}"
+                )
             if (token_idx + 1) % 10 == 0 or token_idx == num_tokens - 1:
                 logger.info(
                     f"[Token评分] 进度 {token_idx + 1}/{num_tokens} | "
@@ -2280,6 +2366,22 @@ def run_convert_stage(
     )
 
     try:
+        if bool(args.debug_verbose):
+            log_infer_call_detail(
+                logger=logger,
+                stage="convert",
+                emotion=str(args.emotion),
+                file_id=str(Path(str(ref_audio_processed)).stem),
+                ref_audio=str(ref_audio_processed),
+                ref_tokens=int(ref_audio_len),
+                ref_text=str(ref_text_processed),
+                gen_text=str(cfg.gen_text),
+                nfe_step=nfe_step,
+                cfg_strength=cfg.cfg_strength,
+                sway_sampling_coef=cfg.sway_sampling_coef,
+                seed=cfg.sampling_seed,
+                extra=f"layers={layers},alpha={cfg.alpha:.4f}",
+            )
         infer_output = call_infer_process_compat(
             infer_process_fn=infer_process,
             call_kwargs={
