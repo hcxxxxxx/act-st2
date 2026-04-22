@@ -763,8 +763,43 @@ def resolve_device(requested: Optional[str]) -> str:
     return "cpu"
 
 
+def patch_pyarrow_json_attr(logger: Optional[logging.Logger] = None) -> None:
+    """
+    兼容部分环境里 pyarrow 缺少 json_ 属性（datasets 新版本会访问 pa.json_()）。
+    该流程仅用于推理，不依赖 datasets 的 Json 特性，因此这里做最小兼容补丁。
+    """
+    try:
+        import pyarrow as pa  # type: ignore
+    except Exception:
+        return
+
+    if hasattr(pa, "json_"):
+        return
+
+    patched = False
+    if hasattr(pa, "json"):
+        try:
+            pa.json_ = pa.json  # type: ignore[attr-defined]
+            patched = True
+        except Exception:
+            patched = False
+
+    if not patched:
+        try:
+            pa.json_ = lambda: pa.string()  # type: ignore[attr-defined]
+            patched = True
+        except Exception:
+            patched = False
+
+    if patched and logger is not None:
+        logger.warning(
+            "[兼容] 检测到 pyarrow 缺少 json_，已注入兼容补丁（优先映射到 pa.json，否则回退 pa.string）。"
+        )
+
+
 def load_runtime(config: RuntimeConfig, logger: logging.Logger) -> RuntimeHandles:
     ensure_f5_tts_importable(config, logger)
+    patch_pyarrow_json_attr(logger)
 
     from cached_path import cached_path
     from hydra.utils import get_class
